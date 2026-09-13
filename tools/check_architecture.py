@@ -138,15 +138,35 @@ def _dependency_paths(depfile: Path, cwd: Path) -> Tuple[Path, ...]:
 
 
 def _core_dependency_violations(
-    compile_database: Path, source: Path, root: Path, work_dir: Path
+    compile_database: Path, consumer_source: Path, root: Path, work_dir: Path
 ) -> List[str]:
     try:
         entries = json.loads(compile_database.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return [f"core-only compile database is unreadable: {error}"]
-    matching = [entry for entry in entries if _compile_database_source(entry) == source.resolve()]
-    if not matching:
-        return ["core-only consumer compile command is missing"]
+    root = root.resolve()
+    consumer_source = consumer_source.resolve()
+    target_source_root = (root / "lib/vehicle_core/src").resolve()
+    matching: List[Tuple[object, Path]] = []
+    for entry in entries:
+        source = _compile_database_source(entry)
+        if source is None:
+            continue
+        is_consumer = source == consumer_source
+        try:
+            is_target_source = source.relative_to(target_source_root) is not None
+        except ValueError:
+            is_target_source = False
+        if is_consumer or is_target_source:
+            matching.append((entry, source))
+
+    failures: List[str] = []
+    if not any(source == consumer_source for _, source in matching):
+        failures.append("core-only consumer compile command is missing")
+    if not any(source != consumer_source for _, source in matching):
+        failures.append("vehicle_core target compile command is missing")
+    if failures:
+        return failures
 
     violations: List[str] = []
     forbidden_parts = (
@@ -158,18 +178,23 @@ def _core_dependency_violations(
         "driver/twai",
         "sdkconfig",
     )
-    for entry in matching:
+    for index, (entry, source) in enumerate(matching):
         directory = entry.get("directory") if isinstance(entry, dict) else None
         cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
         tokens = _command_tokens(entry)
+        label = (
+            "core-only consumer"
+            if source == consumer_source
+            else f"vehicle_core target ({source.relative_to(root).as_posix()})"
+        )
         for token in tokens:
             normalized = token.replace("\\", "/").lower()
             if any(part in normalized for part in forbidden_parts):
-                violations.append(f"forbidden core-only compile dependency: {token}")
+                violations.append(f"forbidden {label} compile dependency: {token}")
         command_text = " ".join(tokens).replace("\\", "/").lower()
         if "/lib/mazda/" in command_text or "lib/mazda/" in command_text:
-            violations.append("core-only consumer compile command mentions Mazda")
-        depfile = work_dir / "core_only_consumer.d"
+            violations.append(f"{label} compile command mentions Mazda")
+        depfile = work_dir / f"core_dependency_{index}.d"
         dependency_probe = _run(
             [*tokens, "-MMD", "-MF", str(depfile), "-MT", str(source)],
             cwd=cwd,
@@ -177,17 +202,17 @@ def _core_dependency_violations(
         )
         if dependency_probe[0] != 0:
             violations.append(
-                "core-only dependency probe failed\n" + dependency_probe[1][-3000:]
+                f"{label} dependency probe failed\n" + dependency_probe[1][-3000:]
             )
             continue
         dependencies = _dependency_paths(depfile, cwd)
         if not dependencies:
-            violations.append("core-only dependency probe produced no dependency data")
+            violations.append(f"{label} dependency probe produced no dependency data")
             continue
         for dependency in dependencies:
             normalized = dependency.as_posix().lower()
             if any(part in normalized for part in forbidden_parts):
-                violations.append(f"forbidden core-only dependency: {dependency}")
+                violations.append(f"forbidden {label} dependency: {dependency}")
     return list(dict.fromkeys(violations))
 
 
@@ -271,7 +296,17 @@ def _check_capture_removal(root: Path) -> None:
         for path in paths:
             if not path.is_file() or path.resolve() == Path(__file__).resolve():
                 continue
-            if path.suffix not in {".c", ".cc", ".cpp", ".h", ".hpp", ".py", ".cmake", ".yml"}:
+            if path.name != "CMakeLists.txt" and path.suffix not in {
+                ".c",
+                ".cc",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".py",
+                ".cmake",
+                ".yml",
+                ".yaml",
+            }:
                 continue
             text = path.read_text(encoding="utf-8")
             for pattern in patterns:

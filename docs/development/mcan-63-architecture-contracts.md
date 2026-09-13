@@ -10,10 +10,13 @@ validators once and adds compiled probes for the module boundaries.
 The gate configures and builds a temporary consumer against only
 `lib/vehicle_core`. The consumer links `vehicle_core`, exercises its portable
 frame validity function, and checks value-copy reading/notification types. Its
-compile command and dependency output are inspected for Mazda, ESP-IDF, RTOS,
-CAN-driver, and other project component inputs. This is an actual target
-boundary check; the root Mazda or firmware projects are not pulled into the
-core-only build.
+compile command and dependency output, together with the `vehicle_core`
+target's own translation-unit entries and dependency outputs, are inspected for
+Mazda, ESP-IDF, RTOS, CAN-driver, and other project component inputs. A
+private dependency introduced by `vehicle_core` therefore fails the gate even
+when the generated consumer remains clean. This is an actual target boundary
+check; the root Mazda or firmware projects are not pulled into the core-only
+build.
 
 The gate also configures, builds, and runs the project-owned adapter tests in
 `components/vehicle_can_rx/tests` and `components/bench_can_ack/tests`. These
@@ -33,10 +36,12 @@ behavioral evidence. The Stage 1.5 `public_header_boundary` and
 `public_header_checker_regression` gates remain independent and registered
 exactly once each.
 
-The same gate scans active code, test, build, and workflow paths for the
-retired `raw_capture` product markers. Historical protocol/development notes
-are not treated as active dependencies. No source DBC or private capture data
-is read or published.
+The same gate scans active code, test, build, and workflow paths—including
+every `CMakeLists.txt`, `.cmake`, `.yml`, and `.yaml` file under the active
+component, firmware, library, test, and tool roots—for the retired
+`raw_capture` product markers. Historical protocol/development notes are not
+treated as active dependencies. No source DBC or private capture data is read
+or published.
 
 ## Verification
 
@@ -44,6 +49,13 @@ Run the consolidated check directly from the repository root:
 
 ```sh
 python3 tools/check_architecture.py --root . --compiler c++ --cmake cmake
+```
+
+The deterministic negative fixtures for a private `vehicle_core` dependency
+and a retired marker in active build files can be run directly with:
+
+```sh
+python3 tests/tools/check_architecture_test.py -v
 ```
 
 The normal host suite runs it through CTest:

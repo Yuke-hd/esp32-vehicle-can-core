@@ -134,3 +134,9 @@ add_test(
           --compiler ${CMAKE_CXX_COMPILER}
           --cmake ${CMAKE_COMMAND}
 )
+
+add_test(
+  NAME architecture_checker_regression
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_SOURCE_DIR}/tests/tools/check_architecture_test.py
+)
