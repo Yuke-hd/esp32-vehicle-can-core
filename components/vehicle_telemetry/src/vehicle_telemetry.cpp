@@ -246,7 +246,11 @@ VehicleTelemetryService::~VehicleTelemetryService() noexcept {
   // joinable std::thread destructor to terminate the process.
   if (processing_thread_.joinable() || dispatcher_thread_.joinable()) {
     run_requested_.store(false, std::memory_order_release);
-    (void)source_->stop();
+    if (source_owned_) {
+      const auto source_result = source_->stop();
+      if (source_result == ResultCode::Ok || source_result == ResultCode::NotRunning)
+        source_owned_ = false;
+    }
     while (!workers_done())
       std::this_thread::sleep_for(std::chrono::milliseconds{1});
     join_workers();
@@ -459,6 +463,7 @@ StatusResult VehicleTelemetryService::start() noexcept {
   last_transport_receive_us_.reset();
   transport_ = vehicle_core::TransportHealth::AwaitingTraffic;
   frames_processed_ = 0;
+  source_owned_ = false;
   lighting_sent_ = false;
   lighting_failure_ = false;
   const auto now_us = clock_->now();
@@ -469,25 +474,78 @@ StatusResult VehicleTelemetryService::start() noexcept {
 
   const auto source_result = source_->start();
   if (source_result != ResultCode::Ok) {
-    const auto failure =
-        source_result == ResultCode::InvalidConfiguration ? source_result : ResultCode::Faulted;
-    lifecycle_state_.store(failure == ResultCode::Faulted ? LifecycleState::Faulted
-                                                          : LifecycleState::Stopped,
-                           std::memory_order_release);
-    publication_.reset(Diagnostics{
-        failure == ResultCode::Faulted ? LifecycleState::Faulted : LifecycleState::Stopped,
-        failure == ResultCode::Faulted ? vehicle_core::TransportHealth::Faulted
-                                       : vehicle_core::TransportHealth::Stopped,
-        AcquisitionMetrics{}});
-    return {failure};
+    // AlreadyRunning identifies a source owned by another service. It is the
+    // one failed-start result for which this service must not even attempt
+    // cleanup; retain Stopped so the same facade can retry after contention
+    // clears. InvalidConfiguration likewise has no partial acquisition to
+    // unwind and remains a recoverable stopped state.
+    if (source_result == ResultCode::AlreadyRunning) {
+      lifecycle_state_.store(LifecycleState::Stopped, std::memory_order_release);
+      publication_.reset(Diagnostics{LifecycleState::Stopped,
+                                     vehicle_core::TransportHealth::Stopped, AcquisitionMetrics{}});
+      return {source_result};
+    }
+    if (source_result == ResultCode::InvalidConfiguration) {
+      lifecycle_state_.store(LifecycleState::Stopped, std::memory_order_release);
+      publication_.reset(Diagnostics{LifecycleState::Stopped,
+                                     vehicle_core::TransportHealth::Stopped, AcquisitionMetrics{}});
+      return {source_result};
+    }
+
+    // A source can report a fault after partially acquiring CAN resources.
+    // Conservatively claim ownership while unwinding so a failed cleanup is
+    // retained for stop() to retry. Ok/NotRunning prove that the unwind is
+    // complete and leave this service restartable.
+    source_owned_ = true;
+    const auto source_cleanup_result = source_->stop();
+    const bool source_cleanup_complete =
+        source_cleanup_result == ResultCode::Ok || source_cleanup_result == ResultCode::NotRunning;
+    if (source_cleanup_complete)
+      source_owned_ = false;
+    const auto failure_state =
+        source_cleanup_complete ? LifecycleState::Stopped : LifecycleState::Faulted;
+    publication_.reset(Diagnostics{failure_state,
+                                   source_cleanup_complete ? vehicle_core::TransportHealth::Stopped
+                                                           : vehicle_core::TransportHealth::Faulted,
+                                   AcquisitionMetrics{}});
+    lifecycle_state_.store(failure_state, std::memory_order_release);
+    return {source_cleanup_complete ? source_result : source_cleanup_result};
   }
+  source_owned_ = true;
+
+  const auto release_source = [this]() noexcept {
+    if (!source_owned_)
+      return ResultCode::NotRunning;
+    const auto result = source_->stop();
+    if (result == ResultCode::Ok || result == ResultCode::NotRunning)
+      source_owned_ = false;
+    return result;
+  };
+
   if (!start_channels()) {
-    (void)source_->stop();
-    (void)stop_channels();
-    lifecycle_state_.store(LifecycleState::Stopped, std::memory_order_release);
-    publication_.reset();
+    const auto source_stop_result = release_source();
+    const bool channels_stopped = stop_channels();
+    if (source_stop_result != ResultCode::Ok && source_stop_result != ResultCode::NotRunning) {
+      lifecycle_state_.store(LifecycleState::Faulted, std::memory_order_release);
+      publication_.reset(Diagnostics{LifecycleState::Faulted,
+                                     vehicle_core::TransportHealth::Faulted, AcquisitionMetrics{}});
+      return {source_stop_result};
+    }
+    const auto cleanup_state = channels_stopped ? LifecycleState::Stopped : LifecycleState::Faulted;
+    lifecycle_state_.store(cleanup_state, std::memory_order_release);
+    publication_.reset(Diagnostics{cleanup_state,
+                                   cleanup_state == LifecycleState::Stopped
+                                       ? vehicle_core::TransportHealth::Stopped
+                                       : vehicle_core::TransportHealth::Faulted,
+                                   AcquisitionMetrics{}});
     return {ResultCode::Faulted};
   }
+
+  // Publish the coherent initial state before either worker can run.  The
+  // lifecycle is already visible as Running, so a worker fault cannot be
+  // overwritten by a late startup publication.
+  lifecycle_state_.store(LifecycleState::Running, std::memory_order_release);
+  publish_current(false);
 
   run_requested_.store(true, std::memory_order_release);
   processing_done_.store(false, std::memory_order_release);
@@ -498,7 +556,7 @@ StatusResult VehicleTelemetryService::start() noexcept {
                   configMAX_PRIORITIES - 3,
                   reinterpret_cast<TaskHandle_t *>(&processing_task_)) != pdPASS) {
     run_requested_.store(false, std::memory_order_release);
-    (void)source_->stop();
+    (void)release_source();
     processing_done_.store(true, std::memory_order_release);
     dispatcher_done_.store(true, std::memory_order_release);
     (void)stop_channels();
@@ -511,7 +569,11 @@ StatusResult VehicleTelemetryService::start() noexcept {
                   configMAX_PRIORITIES - 4,
                   reinterpret_cast<TaskHandle_t *>(&dispatcher_task_)) != pdPASS) {
     run_requested_.store(false, std::memory_order_release);
-    (void)source_->stop();
+    (void)release_source();
+    // No dispatcher task exists on this path.  Mark it complete before
+    // waiting, otherwise the unwind can wait forever for a task that was
+    // never created.
+    dispatcher_done_.store(true, std::memory_order_release);
     (void)wait_for_workers(config_.callback_stop_timeout_us);
     (void)stop_channels();
     lifecycle_state_.store(LifecycleState::Faulted, std::memory_order_release);
@@ -535,7 +597,7 @@ StatusResult VehicleTelemetryService::start() noexcept {
     dispatcher_started = true;
   } catch (...) {
     run_requested_.store(false, std::memory_order_release);
-    (void)source_->stop();
+    (void)release_source();
     if (!processing_started)
       processing_done_.store(true, std::memory_order_release);
     if (!dispatcher_started)
@@ -549,8 +611,6 @@ StatusResult VehicleTelemetryService::start() noexcept {
     return {ResultCode::Faulted};
   }
 #endif
-  lifecycle_state_.store(LifecycleState::Running, std::memory_order_release);
-  publish_current(false);
   return {ResultCode::Ok};
 }
 
@@ -565,7 +625,9 @@ StatusResult VehicleTelemetryService::stop() noexcept {
     lifecycle_state_.store(LifecycleState::Stopping, std::memory_order_release);
     run_requested_.store(false, std::memory_order_release);
   }
-  const auto source_result = source_->stop();
+  const auto source_result = source_owned_ ? source_->stop() : ResultCode::NotRunning;
+  if (source_result == ResultCode::Ok || source_result == ResultCode::NotRunning)
+    source_owned_ = false;
   // The processing owner may still be publishing while the source is being
   // stopped. Copy the already-published state so the lifecycle handoff does
   // not race its mutable decoder state; the final metrics publication occurs
@@ -578,11 +640,14 @@ StatusResult VehicleTelemetryService::stop() noexcept {
   if (!wait_for_workers(config_.callback_stop_timeout_us))
     return {ResultCode::Timeout};
   join_workers();
-  if (source_result != ResultCode::Ok || !stop_channels()) {
+  const bool channels_stopped = stop_channels();
+  const bool source_stopped =
+      source_result == ResultCode::Ok || source_result == ResultCode::NotRunning;
+  if (!source_stopped || !channels_stopped) {
     transport_ = vehicle_core::TransportHealth::Faulted;
     lifecycle_state_.store(LifecycleState::Faulted, std::memory_order_release);
     publish_current(false);
-    return {source_result == ResultCode::Ok ? ResultCode::Faulted : source_result};
+    return {source_stopped ? ResultCode::Faulted : source_result};
   }
 
   const auto metrics = source_->statistics();
@@ -770,6 +835,8 @@ void VehicleTelemetryService::publish_lighting(
   const auto turn_reading =
       snapshot.state.reading_at(snapshot.state.turn_state, candidate::kTurnSwitchId, now_us,
                                 ValidationStatus::Observed, snapshot.diagnostics.transport);
+  const auto turn_health =
+      snapshot.state.health_observation(candidate::kTurnSwitchId, snapshot.diagnostics.transport);
   const bool actionable =
       is_available_reading(turn_reading) && *turn_reading.value != TurnState::Unknown &&
       snapshot.diagnostics.transport != vehicle_core::TransportHealth::Stopped &&
@@ -777,7 +844,12 @@ void VehicleTelemetryService::publish_lighting(
       snapshot.diagnostics.transport != vehicle_core::TransportHealth::TimedOut;
   LightingUpdate update{};
   update.turn = actionable ? *turn_reading.value : TurnState::Unknown;
-  update.availability = actionable ? turn_reading.availability : turn_reading.availability;
+  update.availability = turn_reading.availability;
+  // A malformed turn frame can fault the message before any semantic value
+  // has been accepted. Preserve that distinction for the private sink rather
+  // than presenting it as initial NoData.
+  if (turn_health.signal == vehicle_core::SignalHealth::Unavailable)
+    update.availability = Availability::Unavailable;
 
   std::optional<vehicle_core::MonotonicTimestamp> deadline{};
   if (snapshot.state.turn_state.has_value && snapshot.state.turn_state.freshness_timeout_us) {
@@ -795,7 +867,10 @@ void VehicleTelemetryService::publish_lighting(
 
   const bool changed = !lighting_sent_ || update.turn != lighting_turn_ ||
                        update.availability != lighting_availability_ || lighting_failure_;
-  const bool heartbeat_due = actionable && lighting_sent_ && now_us >= lighting_next_heartbeat_us_;
+  // The private sink also needs bounded refreshes while the semantic state is
+  // unavailable (startup, timeout, fault, or unknown).  A 100 ms heartbeat
+  // keeps validity deadlines from silently expiring in those states.
+  const bool heartbeat_due = lighting_sent_ && now_us >= lighting_next_heartbeat_us_;
   if (!changed && !heartbeat_due)
     return;
 
@@ -804,8 +879,7 @@ void VehicleTelemetryService::publish_lighting(
   lighting_turn_ = update.turn;
   lighting_availability_ = update.availability;
   lighting_failure_ = !accepted;
-  lighting_next_heartbeat_us_ =
-      saturating_add(now_us, accepted && actionable ? kLightingHeartbeatUs : kLightingHeartbeatUs);
+  lighting_next_heartbeat_us_ = saturating_add(now_us, kLightingHeartbeatUs);
 }
 
 bool VehicleTelemetryService::workers_done() const noexcept {

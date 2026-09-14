@@ -340,6 +340,11 @@ private:
   vehicle_core::MonotonicClock *clock_{nullptr};
   AcquisitionSource *source_{nullptr};
   LightingSink *lighting_sink_{nullptr};
+  // Only the service which observed a successful source start may stop the
+  // shared acquisition engine.  Keep this separate from lifecycle_state_:
+  // startup can fail before ownership is acquired, and cleanup can complete
+  // before the worker threads have quiesced.
+  bool source_owned_{false};
   PublicationStore publication_;
   TelemetryConfig config_{};
   VehicleState processing_state_{};

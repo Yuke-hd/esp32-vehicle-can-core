@@ -61,6 +61,213 @@ private:
   bool fail_next_{false};
 };
 
+class RestartableSource final : public mazda::internal::AcquisitionSource {
+public:
+  [[nodiscard]] mazda::ResultCode start() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (running_)
+      return mazda::ResultCode::AlreadyRunning;
+    if (fail_next_start_) {
+      fail_next_start_ = false;
+      return mazda::ResultCode::Faulted;
+    }
+    running_ = true;
+    return mazda::ResultCode::Ok;
+  }
+
+  [[nodiscard]] mazda::ResultCode stop() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (!running_)
+      return mazda::ResultCode::NotRunning;
+    running_ = false;
+    return mazda::ResultCode::Ok;
+  }
+
+  [[nodiscard]] mazda::internal::SourceReceiveStatus
+  receive(vehicle_core::RawCanFrame &, const std::uint32_t timeout_ms) noexcept override {
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      if (!running_)
+        return mazda::internal::SourceReceiveStatus::NotStarted;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{timeout_ms});
+    return mazda::internal::SourceReceiveStatus::Timeout;
+  }
+
+  [[nodiscard]] mazda::internal::SourceStatistics statistics() const noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return statistics_;
+  }
+
+  void fail_next_start() noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    fail_next_start_ = true;
+  }
+
+private:
+  mutable std::mutex mutex_{};
+  mazda::internal::SourceStatistics statistics_{};
+  bool running_{false};
+  bool fail_next_start_{false};
+};
+
+class PartialOwnershipSource final : public mazda::internal::AcquisitionSource {
+public:
+  [[nodiscard]] mazda::ResultCode start() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (running_)
+      return mazda::ResultCode::AlreadyRunning;
+    running_ = true;
+    if (fail_next_start_) {
+      fail_next_start_ = false;
+      return mazda::ResultCode::Faulted;
+    }
+    return mazda::ResultCode::Ok;
+  }
+
+  [[nodiscard]] mazda::ResultCode stop() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    ++stop_calls_;
+    if (!running_)
+      return mazda::ResultCode::NotRunning;
+    if (fail_next_stop_) {
+      fail_next_stop_ = false;
+      return mazda::ResultCode::Faulted;
+    }
+    running_ = false;
+    return mazda::ResultCode::Ok;
+  }
+
+  [[nodiscard]] mazda::internal::SourceReceiveStatus
+  receive(vehicle_core::RawCanFrame &, const std::uint32_t timeout_ms) noexcept override {
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      if (!running_)
+        return mazda::internal::SourceReceiveStatus::NotStarted;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{timeout_ms});
+    return mazda::internal::SourceReceiveStatus::Timeout;
+  }
+
+  [[nodiscard]] mazda::internal::SourceStatistics statistics() const noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return statistics_;
+  }
+
+  void fail_next_start_with_ownership() noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    fail_next_start_ = true;
+  }
+
+  void fail_next_stop() noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    fail_next_stop_ = true;
+  }
+
+  [[nodiscard]] std::size_t stop_calls() const noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return stop_calls_;
+  }
+
+  [[nodiscard]] bool running() const noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return running_;
+  }
+
+private:
+  mutable std::mutex mutex_{};
+  mazda::internal::SourceStatistics statistics_{};
+  std::size_t stop_calls_{0};
+  bool running_{false};
+  bool fail_next_start_{false};
+  bool fail_next_stop_{false};
+};
+
+class ImmediateFaultSource final : public mazda::internal::AcquisitionSource {
+public:
+  [[nodiscard]] mazda::ResultCode start() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (running_)
+      return mazda::ResultCode::AlreadyRunning;
+    running_ = true;
+    return mazda::ResultCode::Ok;
+  }
+
+  [[nodiscard]] mazda::ResultCode stop() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    running_ = false;
+    return mazda::ResultCode::Ok;
+  }
+
+  [[nodiscard]] mazda::internal::SourceReceiveStatus receive(vehicle_core::RawCanFrame &,
+                                                             std::uint32_t) noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (!running_)
+      return mazda::internal::SourceReceiveStatus::NotStarted;
+    fault_started_.store(true, std::memory_order_release);
+    ++statistics_.driver_errors;
+    return mazda::internal::SourceReceiveStatus::Fault;
+  }
+
+  [[nodiscard]] mazda::internal::SourceStatistics statistics() const noexcept override {
+    if (fault_started_.load(std::memory_order_acquire)) {
+      while (!release_statistics_.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    }
+    std::lock_guard<std::mutex> lock{mutex_};
+    return statistics_;
+  }
+
+  [[nodiscard]] bool fault_started() const noexcept {
+    return fault_started_.load(std::memory_order_acquire);
+  }
+
+  void release_statistics() noexcept { release_statistics_.store(true, std::memory_order_release); }
+
+private:
+  mutable std::mutex mutex_{};
+  mazda::internal::SourceStatistics statistics_{};
+  std::atomic<bool> fault_started_{false};
+  std::atomic<bool> release_statistics_{false};
+  bool running_{false};
+};
+
+class NonIdempotentStopSource final : public mazda::internal::AcquisitionSource {
+public:
+  [[nodiscard]] mazda::ResultCode start() noexcept override {
+    if (stop_called_)
+      return mazda::ResultCode::AlreadyRunning;
+    const auto result = source_.start();
+    if (result == mazda::ResultCode::Ok)
+      stop_called_ = false;
+    return result;
+  }
+
+  [[nodiscard]] mazda::ResultCode stop() noexcept override {
+    if (stop_called_)
+      return mazda::ResultCode::Faulted;
+    stop_called_ = true;
+    return source_.stop();
+  }
+
+  [[nodiscard]] mazda::internal::SourceReceiveStatus
+  receive(vehicle_core::RawCanFrame &frame, const std::uint32_t timeout_ms) noexcept override {
+    return source_.receive(frame, timeout_ms);
+  }
+
+  [[nodiscard]] mazda::internal::SourceStatistics statistics() const noexcept override {
+    return source_.statistics();
+  }
+
+  [[nodiscard]] mazda::ResultCode inject(const vehicle_core::RawCanFrame &frame) noexcept {
+    return source_.inject(frame);
+  }
+
+private:
+  mazda::internal::HostAcquisitionSource source_{};
+  bool stop_called_{false};
+};
+
 vehicle_core::RawCanFrame frame(const std::uint32_t identifier,
                                 const vehicle_core::MonotonicTimestamp timestamp_us,
                                 std::initializer_list<std::uint8_t> bytes) {
@@ -127,6 +334,30 @@ bool wait_for_reading(const mazda::internal::VehicleTelemetryService &service,
   return service.speed_kph().value.has_value();
 }
 
+bool wait_for_lighting_count(const FakeLightingSink &lighting, const std::size_t count,
+                             const std::chrono::milliseconds timeout = std::chrono::milliseconds{
+                                 500}) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (lighting.size() >= count)
+      return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  return lighting.size() >= count;
+}
+
+template <typename Predicate>
+bool wait_for_flag(Predicate predicate,
+                   const std::chrono::milliseconds timeout = std::chrono::milliseconds{500}) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate())
+      return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  return predicate();
+}
+
 int failures = 0;
 
 void expect(const bool condition, const char *expression, const char *file, const int line) {
@@ -169,6 +400,107 @@ void test_lifecycle_and_subscription_state() {
   EXPECT(service.stop().ok());
   EXPECT(service.unsubscribe(subscription).ok());
   EXPECT(service.unsubscribe(second_subscription).ok());
+}
+
+void test_failed_shared_source_start_does_not_stop_existing_owner() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink first_lighting;
+  FakeLightingSink second_lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService first{clock, source, first_lighting, config};
+  EXPECT(first.start().ok());
+
+  // A contending service remains stopped and must not release the source
+  // owned by the already-running service.
+  mazda::internal::VehicleTelemetryService second{clock, source, second_lighting, config};
+  EXPECT(second.start().status == mazda::ResultCode::AlreadyRunning);
+  EXPECT(second.diagnostics().lifecycle == mazda::LifecycleState::Stopped);
+
+  clock.set(30);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 30,
+                             {0x09, 0x5b, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_reading(first));
+  EXPECT(first.diagnostics().lifecycle == mazda::LifecycleState::Running);
+  EXPECT(first.stop().ok());
+  EXPECT(second.start().ok());
+  EXPECT(second.stop().ok());
+}
+
+void test_source_start_failure_without_ownership_is_restartable() {
+  FakeClock clock;
+  RestartableSource source;
+  source.fail_next_start();
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  EXPECT(service.start().status == mazda::ResultCode::Faulted);
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Stopped);
+  EXPECT(service.start().ok());
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Running);
+  EXPECT(service.stop().ok());
+}
+
+void test_partial_source_start_cleanup_success_is_restartable() {
+  FakeClock clock;
+  PartialOwnershipSource source;
+  source.fail_next_start_with_ownership();
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  // The source reports failure after acquiring ownership. The service must
+  // release that ownership before returning and leave itself restartable.
+  EXPECT(service.start().status == mazda::ResultCode::Faulted);
+  EXPECT(source.stop_calls() == 1);
+  EXPECT(!source.running());
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Stopped);
+  EXPECT(service.start().ok());
+  EXPECT(service.stop().ok());
+}
+
+void test_partial_source_start_cleanup_failure_is_retried_by_stop() {
+  FakeClock clock;
+  PartialOwnershipSource source;
+  source.fail_next_start_with_ownership();
+  source.fail_next_stop();
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  // Cleanup failure proves ownership was retained. A later stop must retry the
+  // source release and finish the lifecycle once the source accepts it.
+  EXPECT(service.start().status == mazda::ResultCode::Faulted);
+  EXPECT(source.stop_calls() == 1);
+  EXPECT(source.running());
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Faulted);
+  EXPECT(service.stop().status == mazda::ResultCode::Faulted);
+  EXPECT(source.stop_calls() == 2);
+  EXPECT(!source.running());
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Stopped);
+}
+
+void test_immediate_worker_receive_fault_is_not_overwritten_by_running() {
+  FakeClock clock;
+  ImmediateFaultSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_flag([&source] { return source.fault_started(); }));
+  EXPECT(wait_for_lifecycle(service, mazda::LifecycleState::Running));
+  source.release_statistics();
+  EXPECT(wait_for_lifecycle(service, mazda::LifecycleState::Faulted));
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Faulted);
+  EXPECT(service.stop().status == mazda::ResultCode::Faulted);
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Stopped);
 }
 
 void test_unknown_frame_is_transport_traffic_and_expires() {
@@ -295,6 +627,37 @@ void test_blocked_callback_does_not_block_polling_and_stop_is_retryable() {
   EXPECT(service.stop().ok());
 }
 
+void test_callback_stop_timeout_can_retry_after_source_already_stopped() {
+  FakeClock clock;
+  NonIdempotentStopSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 10'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  TurnRecorder recorder{};
+  EXPECT(service.subscribe_turn(&record_turn, &recorder).ok());
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_count(recorder, 1));
+  recorder.block_left = true;
+  clock.set(20);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 20, {0, 0x20, 0, 0, 0, 0, 0, 0})) ==
+         mazda::ResultCode::Ok);
+  {
+    std::unique_lock<std::mutex> lock{recorder.mutex};
+    EXPECT(recorder.changed.wait_for(lock, std::chrono::milliseconds{500},
+                                     [&recorder] { return recorder.entered_block; }));
+  }
+
+  EXPECT(service.stop().status == mazda::ResultCode::Timeout);
+  {
+    std::lock_guard<std::mutex> lock{recorder.mutex};
+    recorder.release_block = true;
+  }
+  recorder.changed.notify_all();
+  EXPECT(service.stop().ok());
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Stopped);
+}
+
 void test_terminal_receive_fault_is_propagated_and_restart_clears_state() {
   FakeClock clock;
   mazda::internal::HostAcquisitionSource source;
@@ -372,6 +735,77 @@ void test_lighting_startup_black_deadline_heartbeat_and_failure_retry() {
   EXPECT(service.stop().ok());
 }
 
+void test_lighting_heartbeat_for_off_unknown_nodata_and_unavailable() {
+  // Startup emits Unknown/NoData. A later heartbeat must still refresh the
+  // private sink even though there is no actionable turn value.
+  {
+    FakeClock clock;
+    mazda::internal::HostAcquisitionSource source;
+    FakeLightingSink lighting;
+    mazda::TelemetryConfig config{};
+    config.callback_stop_timeout_us = 20'000;
+    mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+    EXPECT(service.start().ok());
+    EXPECT(wait_for_lighting_count(lighting, 1));
+    EXPECT(lighting.at(0).turn == mazda::TurnState::Unknown);
+    EXPECT(lighting.at(0).availability == mazda::Availability::NoData);
+    clock.set(100'001);
+    EXPECT(wait_for_lighting_count(lighting, 2));
+    EXPECT(lighting.at(1).turn == mazda::TurnState::Unknown);
+    EXPECT(lighting.at(1).availability == mazda::Availability::NoData);
+    EXPECT(service.stop().ok());
+  }
+
+  // Off is semantically known but does not produce a colour command. It must
+  // receive the same bounded private heartbeat as an active turn state.
+  {
+    FakeClock clock;
+    mazda::internal::HostAcquisitionSource source;
+    FakeLightingSink lighting;
+    mazda::TelemetryConfig config{};
+    config.callback_stop_timeout_us = 20'000;
+    mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+    EXPECT(service.start().ok());
+    EXPECT(wait_for_lighting_count(lighting, 1));
+    clock.set(1);
+    EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 1, {0, 0, 0, 0, 0, 0, 0, 0})) ==
+           mazda::ResultCode::Ok);
+    EXPECT(wait_for_lighting_count(lighting, 2));
+    EXPECT(lighting.at(1).turn == mazda::TurnState::Off);
+    EXPECT(lighting.at(1).availability == mazda::Availability::Fresh);
+    clock.set(100'001);
+    EXPECT(wait_for_lighting_count(lighting, 3));
+    EXPECT(lighting.at(2).turn == mazda::TurnState::Off);
+    EXPECT(service.stop().ok());
+  }
+
+  // A malformed turn message makes the private value unavailable while the
+  // processing owner remains alive. That state also requires a heartbeat.
+  {
+    FakeClock clock;
+    mazda::internal::HostAcquisitionSource source;
+    FakeLightingSink lighting;
+    mazda::TelemetryConfig config{};
+    config.callback_stop_timeout_us = 20'000;
+    mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+    EXPECT(service.start().ok());
+    EXPECT(wait_for_lighting_count(lighting, 1));
+    clock.set(1);
+    EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 1, {0, 0x20, 0, 0, 0, 0, 0, 0})) ==
+           mazda::ResultCode::Ok);
+    EXPECT(wait_for_lighting_count(lighting, 2));
+    EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 2, {0})) == mazda::ResultCode::Ok);
+    EXPECT(wait_for_lighting_count(lighting, 3));
+    EXPECT(lighting.at(2).turn == mazda::TurnState::Unknown);
+    EXPECT(lighting.at(2).availability == mazda::Availability::Unavailable);
+    clock.set(100'001);
+    EXPECT(wait_for_lighting_count(lighting, 4));
+    EXPECT(lighting.at(3).turn == mazda::TurnState::Unknown);
+    EXPECT(lighting.at(3).availability == mazda::Availability::Unavailable);
+    EXPECT(service.stop().ok());
+  }
+}
+
 void test_public_facade_lifecycle_contract() {
   mazda::VehicleTelemetry telemetry{};
   EXPECT(telemetry.configure(mazda::TelemetryConfig{}).ok());
@@ -385,11 +819,18 @@ void test_public_facade_lifecycle_contract() {
 
 int main() {
   test_lifecycle_and_subscription_state();
+  test_failed_shared_source_start_does_not_stop_existing_owner();
+  test_source_start_failure_without_ownership_is_restartable();
+  test_partial_source_start_cleanup_success_is_restartable();
+  test_partial_source_start_cleanup_failure_is_retried_by_stop();
+  test_immediate_worker_receive_fault_is_not_overwritten_by_running();
   test_unknown_frame_is_transport_traffic_and_expires();
   test_notifications_coalesce_and_recover();
   test_blocked_callback_does_not_block_polling_and_stop_is_retryable();
+  test_callback_stop_timeout_can_retry_after_source_already_stopped();
   test_terminal_receive_fault_is_propagated_and_restart_clears_state();
   test_lighting_startup_black_deadline_heartbeat_and_failure_retry();
+  test_lighting_heartbeat_for_off_unknown_nodata_and_unavailable();
   test_public_facade_lifecycle_contract();
   return failures == 0 ? 0 : 1;
 }
