@@ -11,7 +11,7 @@ namespace mazda::internal {
 class VehicleTelemetryAccess final {
 public:
   [[nodiscard]] static StatusResult bind_lighting_sink(VehicleTelemetry &facade,
-                                                        LightingSink &sink) noexcept;
+                                                       LightingSink &sink) noexcept;
 };
 
 } // namespace mazda::internal
