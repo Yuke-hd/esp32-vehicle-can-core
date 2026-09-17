@@ -36,6 +36,13 @@ bool reading_is_actionable(const mazda::Reading<float> &reading) noexcept {
          (reading.availability == mazda::Availability::Fresh ||
           reading.availability == mazda::Availability::FreshnessUnverified);
 }
+
+// The facade owns a 32 KiB opaque service allocation. Keep both it and the
+// callback context in application-owned storage instead of the 3.5 KiB
+// app_main task stack. Declare the context first so it outlives the facade if
+// static teardown ever runs after the workers have been stopped.
+static ApplicationState application_state{};
+static mazda::VehicleTelemetry telemetry{};
 } // namespace
 
 extern "C" void app_main(void) {
@@ -48,13 +55,11 @@ extern "C" void app_main(void) {
     return;
   }
 
-  mazda::VehicleTelemetry telemetry{};
   if (!mazda::application::bind_local_argb_sink(telemetry).ok()) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "private local ARGB sink binding failed; refusing to start CAN");
     return;
   }
-  ApplicationState application_state{};
   const auto turn_subscription =
       telemetry.on_turn_state_changed(&turn_state_changed, &application_state);
   if (!turn_subscription.ok()) {
