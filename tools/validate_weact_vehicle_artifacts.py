@@ -48,6 +48,9 @@ def main() -> int:
     )
     can_source = (root / "components/can_bus/src/can_bus.cpp").read_text(encoding="utf-8")
     can_cmake = (root / "components/can_bus/CMakeLists.txt").read_text(encoding="utf-8")
+    telemetry_source = (
+        root / "components/vehicle_telemetry/src/vehicle_telemetry.cpp"
+    ).read_text(encoding="utf-8")
 
     require(
         vehicle_cmake,
@@ -107,6 +110,19 @@ def main() -> int:
     ):
         for forbidden in ("twai_transmit", "twai_transmit_v2", "TWAI_MODE_NORMAL", "TWAI_MODE_NO_ACK"):
             forbid(source, forbidden, source_name, failures)
+
+    require(
+        telemetry_source,
+        "constexpr TickType_t kMinimumTaskDelayTicks",
+        "telemetry ESP task delay guard",
+        failures,
+    )
+    forbid(
+        telemetry_source,
+        "vTaskDelay(pdMS_TO_TICKS(1));",
+        "telemetry ESP task delay guard",
+        failures,
+    )
     public_functions = re.findall(
         r"^(?:Result|Statistics)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
         can_header,

@@ -1,6 +1,7 @@
 #include "mazda/vehicle_telemetry.hpp"
 
 #include "mazda/publication_store.hpp"
+#include "mazda/vehicle_telemetry_internal.hpp"
 #include "mazda/vehicle_telemetry_service.hpp"
 
 #include <algorithm>
@@ -24,6 +25,11 @@ namespace {
 constexpr std::uint64_t kNanosecondsPerMicrosecond = 1'000;
 constexpr vehicle_core::Microseconds kLightingHeartbeatUs = 100'000;
 constexpr std::uint16_t kInvalidChannel = 0xffffU;
+#if defined(ESP_PLATFORM)
+// Keep task polling cooperative even when the configured tick rate truncates
+// a one-millisecond delay to zero ticks.
+constexpr TickType_t kMinimumTaskDelayTicks = pdMS_TO_TICKS(1) == 0 ? 1 : pdMS_TO_TICKS(1);
+#endif
 
 vehicle_core::MonotonicTimestamp saturating_add(const vehicle_core::MonotonicTimestamp value,
                                                 const vehicle_core::Microseconds delta) noexcept {
@@ -344,6 +350,14 @@ StatusResult VehicleTelemetryService::configure(const TelemetryConfig &config) n
   if (result.ok())
     config_ = config;
   return result;
+}
+
+StatusResult VehicleTelemetryService::bind_lighting_sink(LightingSink &lighting_sink) noexcept {
+  std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
+    return {ResultCode::InvalidState};
+  lighting_sink_ = &lighting_sink;
+  return {ResultCode::Ok};
 }
 
 bool VehicleTelemetryService::start_channels() noexcept {
@@ -728,7 +742,7 @@ void VehicleTelemetryService::dispatcher_loop() noexcept {
   while (run_requested_.load(std::memory_order_acquire)) {
     if (dispatch_channels_once() == 0) {
 #if defined(ESP_PLATFORM)
-      vTaskDelay(pdMS_TO_TICKS(1));
+      vTaskDelay(kMinimumTaskDelayTicks);
 #else
       std::this_thread::sleep_for(std::chrono::milliseconds{1});
 #endif
@@ -893,7 +907,7 @@ bool VehicleTelemetryService::wait_for_workers(const std::uint64_t timeout_us) n
   while (!workers_done()) {
     if (clock_->now() >= deadline)
       return false;
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(kMinimumTaskDelayTicks);
   }
 #else
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds{timeout_us};
@@ -1026,6 +1040,14 @@ StatusResult VehicleTelemetryService::unsubscribe(const SubscriptionToken &token
 } // namespace mazda::internal
 
 namespace mazda {
+
+StatusResult
+internal::VehicleTelemetryAccess::bind_lighting_sink(VehicleTelemetry &facade,
+                                                     internal::LightingSink &sink) noexcept {
+  auto *service =
+      reinterpret_cast<internal::VehicleTelemetryService *>(facade.implementation_storage_);
+  return service->bind_lighting_sink(sink);
+}
 
 static_assert(sizeof(internal::VehicleTelemetryService) <= sizeof(VehicleTelemetry));
 static_assert(alignof(internal::VehicleTelemetryService) <= alignof(std::max_align_t));
