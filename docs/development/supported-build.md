@@ -46,7 +46,7 @@ export CC=clang-14
 export CXX=clang++-14
 export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1:print_summary=1
 export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
-cmake -S . -B /tmp/mazda-can-telemetry-sanitizers -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON -DMAZDA_BUILD_HOST_TESTS=ON -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake -S . -B /tmp/mazda-can-telemetry-sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_BUILD_HOST_TESTS=ON -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 cmake --build /tmp/mazda-can-telemetry-sanitizers --parallel
 ctest --test-dir /tmp/mazda-can-telemetry-sanitizers --output-on-failure
 ```

@@ -94,7 +94,7 @@ jobs:
           CXX: clang++-14
         run: |
           cmake -S . -B "$RUNNER_TEMP/mazda-host-sanitizers" -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON \
             -DMAZDA_BUILD_HOST_TESTS=ON \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
