@@ -4,10 +4,9 @@
 
 `firmware/tcan485-bench-ack-only` is a separately named ESP-IDF project for an
 LILYGO/TTGO T-CAN485 board on an isolated, protected classic-CAN bench. It is
-not WeAct CAN485 V1.1 firmware, is not a vehicle artifact, and must never be
-connected to a vehicle. The project name, component description, startup
-warning, and application-facing `bench_can_ack` component all carry the
-`BENCH_ACK_ONLY` label.
+not product or vehicle firmware and must never be connected to a vehicle. The
+project name, component description, startup warning, and application-facing
+`bench_can_ack` component all carry the `BENCH_ACK_ONLY` label.
 
 The target uses TWAI normal mode so a compliant classic-CAN frame can be
 acknowledged by the controller. It accepts frames through the existing
@@ -29,29 +28,24 @@ and the CAN component is stopped before the application exits.
 
 The `bench_can_ack` component owns the bench's compile-time
 `TWAI_MODE_NORMAL` and T-CAN485 CAN-pin binding. The shared `can_bus` component
-contains only the receive engine and has no mode selector. The vehicle project
-enumerates `vehicle_can_rx` instead, so the bench binding is absent from the
-vehicle component graph; conversely, the bench project enumerates only
-`bench_can_ack`. Neither application exposes a data-frame transmit operation.
+contains only the receive engine and has no mode selector. The bench project
+enumerates only `bench_can_ack`, and exposes no data-frame transmit operation.
+The WeAct/accessory-controller application is maintained separately in the
+[dedicated accessory repository](https://github.com/Yuke-hd/mazda-can-accessory-controller).
 
-## Build and artifact checks
+## Build checks
 
 From an ESP-IDF v5.5.4 environment, build each project in its own directory:
 
 ```text
-python3 tools/validate_weact_vehicle_artifacts.py
-cd firmware/weact-can485-v1.1
-idf.py set-target esp32
-idf.py build
-cd ../tcan485-bench-ack-only
+cd firmware/tcan485-bench-ack-only
 idf.py set-target esp32
 idf.py build
 ```
 
-The validation script is a release gate. It checks the project names and
-labels, the vehicle listen-only binding and zero TX queue, the bench warning
-and normal-mode binding, component-graph separation, and the absence of
-transmit calls. Do not rename or package the bench output as vehicle firmware.
+The host architecture gate checks the bench binding, zero TX queue, and
+absence of transmit calls. Do not rename or package the bench output as
+vehicle firmware.
 
 ## Physical isolation and test alternatives
 
@@ -60,12 +54,11 @@ two-ended test bus. Keep the board disconnected from every vehicle harness and
 from any unprotected automotive supply. Mark the board and its firmware
 artifact `T-CAN485 BENCH_ACK_ONLY — ISOLATED BENCH ONLY`.
 
-For final vehicle behavior, use the strict vehicle/listen-only target or a
-one-shot/no-ACK test setup. Those paths do not require an ACK-capable receiver
-and preserve the vehicle-side no-transmit boundary. No raw vehicle captures,
-VIN, credentials, precise location, or reconstructable trip data belong in
-build evidence, Issues, PRs, or releases.
+For final vehicle behavior, consult the strict listen-only target in the
+[dedicated accessory repository](https://github.com/Yuke-hd/mazda-can-accessory-controller).
+No raw vehicle captures, VIN, credentials, precise location, or reconstructable
+trip data belong in build evidence, Issues, PRs, or releases.
 
 Integrated hardware ACK validation is not claimed by this software change; it
-requires the physical bench procedure. It is not evidence for the WeAct V1.1
-vehicle board or its always-powered CA-IS2062A receive-only behavior.
+requires the physical bench procedure. It is not evidence for any
+vehicle-side hardware or application.

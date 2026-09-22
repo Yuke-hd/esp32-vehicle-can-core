@@ -3,12 +3,10 @@
 
 This host-only gate owns repository-wide checks that cannot live in one
 production target: the portable core must build without Mazda or RTOS inputs,
-vehicle and isolated-bench bindings must compile and exercise their
-project-owned mode contracts, and retired capture code must stay absent. The
-existing source-safety validators are run here rather than duplicated in
-CTest and firmware CI. Public-header positive/negative checks remain the
-separate ``public_header_boundary`` and ``public_header_checker_regression``
-gates from Stage 1.5.
+the isolated-bench binding must compile and exercise its project-owned mode
+contract, and retired capture code must stay absent. Public-header
+positive/negative checks remain the separate ``public_header_boundary`` and
+``public_header_checker_regression`` gates from Stage 1.5.
 """
 
 from __future__ import annotations
@@ -266,13 +264,6 @@ def _check_adapter(
     print(f"OK   {label} project-owned mode adapter compiled and passed")
 
 
-def _run_validator(root: Path, label: str, command: Sequence[str]) -> None:
-    result = _run(command, cwd=root)
-    if result[0] != 0:
-        raise ArchitectureFailure(f"{label} failed\n" + result[1][-3000:])
-    print(f"OK   {label}")
-
-
 def _check_capture_removal(root: Path) -> None:
     patterns = (
         "raw_capture",
@@ -317,59 +308,14 @@ def _check_capture_removal(root: Path) -> None:
     print("OK   retired raw_capture product has no active code/build dependency")
 
 
-def _check_validator_ownership(root: Path) -> None:
-    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    host_cmake = (root / "tests/host/CMakeLists.txt").read_text(encoding="utf-8")
-    scripts = (
-        "validate_can_receive_only.py",
-        "validate_weact_vehicle_artifacts.py",
-        "validate_local_argb_boundary.py",
-    )
-    failures: List[str] = []
-    for script in scripts:
-        if script in workflow:
-            failures.append(f"{script} is directly invoked by CI; architecture_contracts must own it")
-        if script in host_cmake:
-            failures.append(f"{script} is separately registered in host CTest")
-    if failures:
-        raise ArchitectureFailure("\n".join(failures))
-    print("OK   architecture validators have one consolidated CTest owner")
-
-
 def check(root: Path, cmake: str, compiler: Sequence[str]) -> int:
     root = root.resolve()
     with tempfile.TemporaryDirectory(prefix="mazda-architecture-") as directory:
         work_dir = Path(directory)
         try:
             _check_core_only(root, cmake, compiler, work_dir)
-            _check_adapter(root, cmake, compiler, root / "components/vehicle_can_rx/tests", work_dir)
             _check_adapter(root, cmake, compiler, root / "components/bench_can_ack/tests", work_dir)
-            _run_validator(
-                root,
-                "CAN receive-only safety validator",
-                (
-                    sys.executable,
-                    str(root / "tools/validate_can_receive_only.py"),
-                    "--public-header",
-                    str(root / "components/can_bus/include/can_bus/can_bus.h"),
-                    "--implementation",
-                    str(root / "components/can_bus/src/can_bus.cpp"),
-                    "--vehicle-binding",
-                    str(root / "components/vehicle_can_rx/src/driver_binding.cpp"),
-                ),
-            )
-            _run_validator(
-                root,
-                "vehicle/bench artifact validator",
-                (sys.executable, str(root / "tools/validate_weact_vehicle_artifacts.py"), "--root", str(root)),
-            )
-            _run_validator(
-                root,
-                "local ARGB semantic boundary validator",
-                (sys.executable, str(root / "tools/validate_local_argb_boundary.py"), "--root", str(root)),
-            )
             _check_capture_removal(root)
-            _check_validator_ownership(root)
         except (ArchitectureFailure, OSError, ValueError) as error:
             print(f"ERROR: {error}", file=sys.stderr)
             return 1

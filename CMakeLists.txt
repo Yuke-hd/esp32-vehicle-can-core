@@ -14,12 +14,7 @@ option(MAZDA_BUILD_HOST_TESTS "Build portable vehicle_core host tests" ${BUILD_T
 
 add_subdirectory(lib/vehicle_core)
 add_subdirectory(lib/mazda)
-add_subdirectory(lib/vehicle_lighting_policy)
-add_subdirectory(components/local_argb_sink_contract)
-add_subdirectory(components/local_argb)
-add_subdirectory(components/local_argb_compat)
 add_subdirectory(components/vehicle_telemetry)
-add_subdirectory(components/vehicle_telemetry_consumer)
 
 if(MAZDA_BUILD_HOST_TESTS)
   enable_testing()

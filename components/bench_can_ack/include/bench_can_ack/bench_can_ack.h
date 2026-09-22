@@ -10,7 +10,7 @@ struct CanPins {
 };
 
 // These pins belong to the isolated LILYGO/TTGO T-CAN485 bench target only.
-// They are deliberately not part of the vehicle board capability record.
+// They are deliberately not part of any vehicle product binding.
 inline constexpr CanPins kCanPins{27, 26};
 
 // The component is selected by the isolated bench application. It exposes

@@ -60,6 +60,7 @@ not use the host sanitizer runtime. Do not disable leak detection or add a
 blanket test exclusion when reproducing a failure: fix the reported test or
 record the specific unsupported platform/toolchain instead.
 
-The firmware builds remain separately pinned to ESP-IDF `v5.5.4`; see the
-[MCAN-3 scaffold](mcan-3-scaffold.md) for the isolated vehicle and bench
-commands.
+The retained firmware build is separately pinned to ESP-IDF `v5.5.4`; see the
+[MCAN-3 scaffold](mcan-3-scaffold.md) for the isolated T-CAN485 bench
+commands. WeAct/accessory-controller firmware is built and released from the
+[dedicated accessory repository](https://github.com/Yuke-hd/mazda-can-accessory-controller).

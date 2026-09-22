@@ -161,8 +161,8 @@ public:
 
 #endif
 
-// Generic lighting is a private sink. local_argb owns policy/driver details in
-// S2-B; this service only sends bounded semantic updates and a validity
+// Generic lighting is a private sink. Downstream consumers own policy/driver
+// details; this service only sends bounded semantic updates and a validity
 // deadline. Tests provide a fake sink without adding a production LED path.
 class LightingSink {
 public:
