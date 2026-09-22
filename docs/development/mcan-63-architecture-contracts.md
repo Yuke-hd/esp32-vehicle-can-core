@@ -8,7 +8,7 @@ bench boundary.
 ## Compiled boundaries
 
 The gate configures and builds a temporary consumer against only
-`lib/vehicle_core`. The consumer links `vehicle_core`, exercises its portable
+`components/vehicle_core`. The consumer links `vehicle_core`, exercises its portable
 frame-validity function, and checks value-copy reading/notification types. Its
 compile command and dependency output, together with `vehicle_core` translation
 units, are inspected for controller, ESP-IDF, RTOS, CAN-driver, and other

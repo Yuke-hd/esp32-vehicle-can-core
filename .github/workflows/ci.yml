@@ -50,7 +50,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/ccache-host
-          key: ${{ runner.os }}-host-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'CMakeLists.txt', 'components/**', 'lib/**', 'tests/**', 'tools/**') }}
+          key: ${{ runner.os }}-host-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'CMakeLists.txt', 'components/**', 'tests/**', 'tools/**') }}
           restore-keys: |
             ${{ runner.os }}-host-ccache-v1-
       - name: Install host tools
@@ -64,7 +64,7 @@ jobs:
       - name: Validate C++ formatting
         shell: bash
         run: |
-          mapfile -t sources < <(find lib components firmware tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
+          mapfile -t sources < <(find components firmware tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
           test "${#sources[@]}" -gt 0
           clang-format-14 --dry-run --Werror "${sources[@]}"
       - name: Configure host tests
@@ -112,7 +112,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/ccache-firmware
-          key: ${{ runner.os }}-firmware-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'firmware/**', 'components/**', 'lib/**', 'tools/check_toolchain.py') }}
+          key: ${{ runner.os }}-firmware-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'firmware/**', 'components/**', 'tools/check_toolchain.py') }}
           restore-keys: |
             ${{ runner.os }}-firmware-ccache-v1-
       - name: Check and build with ESP-IDF v5.5.4

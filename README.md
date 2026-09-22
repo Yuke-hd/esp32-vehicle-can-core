@@ -7,17 +7,20 @@ identity are `esp32-vehicle-can-core`; the existing GitHub repository URL is
 kept as the migration origin until an administrator renames it.
 
 This repository is the reusable foundation for downstream vehicle projects.
-It deliberately does not contain a make/model decoder, vehicle telemetry
+It deliberately does not contain a make/model decoder, product publication
 service, lighting policy, board product, DBC, or vehicle capture. Those belong
-in the consuming controller repository. A controller uses this repository as a
-pinned Git submodule; see
-[`docs/development/downstream-submodule.md`](docs/development/downstream-submodule.md).
+in the consuming controller repository. Host consumers use CMake FetchContent
+and ESP-IDF consumers use a pinned Component Manager Git dependency; see
+[`docs/development/consumer-integration.md`](docs/development/consumer-integration.md).
 
 ## Contents and ownership
 
-- `lib/vehicle_core`: portable frame, time, signal, reading, notification,
+- `components/vehicle_core`: portable frame, time, signal, reading, notification,
   health, and decoder-contract types. It has no ESP-IDF, RTOS, transport, or
   make/model dependency.
+- `components/vehicle_telemetry`: make-agnostic runtime that composes injected
+  acquisition, frame-processing, and observer strategies. It owns lifecycle,
+  timeout, and transport diagnostics, not product semantics.
 - `components/can_bus`: ESP-IDF/TWAI receive-only transport with bounded
   buffering and diagnostics.
 - `components/bench_can_ack`: the explicitly isolated normal-mode CAN ACK

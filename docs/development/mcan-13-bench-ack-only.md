@@ -31,7 +31,7 @@ The `bench_can_ack` component owns the bench's compile-time
 contains only the receive engine and has no mode selector. The bench project
 enumerates only `bench_can_ack`, and exposes no data-frame transmit operation.
 Make/model controller applications are maintained separately in downstream
-repositories that consume this core as a pinned Git submodule.
+repositories that consume these generic components as pinned Git dependencies.
 
 ## Build checks
 

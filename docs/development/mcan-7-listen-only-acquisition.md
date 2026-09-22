@@ -1,9 +1,10 @@
 # MCAN-7 receive-only acquisition
 
-The source repository owns the shared receive-only `can_bus` component and the
-isolated bench adapter. It does not own a vehicle listen-only application,
-make/model decoder, or board product. Those artifacts live in a downstream
-controller repository that consumes this core as a pinned Git submodule.
+The source repository owns the shared receive-only `can_bus` component, its
+generic `vehicle_telemetry::CanBusSource` binding, and the isolated bench
+adapter. It does not own a vehicle listen-only application, make/model
+decoder, or board product. Those artifacts live in a downstream controller
+repository that consumes these components as pinned Git dependencies.
 
 ## Safety boundary
 

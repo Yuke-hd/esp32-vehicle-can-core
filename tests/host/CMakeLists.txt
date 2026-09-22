@@ -25,7 +25,7 @@ target_include_directories(
   PRIVATE
     ${CMAKE_SOURCE_DIR}/components/can_bus/include
     ${CMAKE_SOURCE_DIR}/components/can_bus/private_include
-    ${CMAKE_SOURCE_DIR}/lib/vehicle_core/include
+    ${CMAKE_SOURCE_DIR}/components/vehicle_core/include
 )
 target_link_libraries(can_bus_boundary_tests PRIVATE doctest::doctest)
 target_compile_features(can_bus_boundary_tests PRIVATE cxx_std_17)
@@ -37,11 +37,16 @@ target_include_directories(
   PRIVATE
     ${CMAKE_SOURCE_DIR}/components/can_bus/include
     ${CMAKE_SOURCE_DIR}/components/can_bus/private_include
-    ${CMAKE_SOURCE_DIR}/lib/vehicle_core/include
+    ${CMAKE_SOURCE_DIR}/components/vehicle_core/include
 )
 target_compile_features(can_bus_lifecycle_tests PRIVATE cxx_std_17)
 target_link_libraries(can_bus_lifecycle_tests PRIVATE doctest::doctest)
 doctest_discover_tests(can_bus_lifecycle_tests)
+
+add_executable(vehicle_telemetry_runtime_tests vehicle_telemetry_runtime_tests.cpp)
+target_link_libraries(vehicle_telemetry_runtime_tests PRIVATE vehicle_telemetry doctest::doctest)
+target_compile_features(vehicle_telemetry_runtime_tests PRIVATE cxx_std_17)
+doctest_discover_tests(vehicle_telemetry_runtime_tests)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(

@@ -78,7 +78,7 @@ def _write_core_probe(probe_dir: Path, root: Path) -> Path:
         "set(CMAKE_CXX_EXTENSIONS OFF)\n"
         "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n"
         "set(BUILD_TESTING OFF CACHE BOOL \"\" FORCE)\n"
-        "add_subdirectory(" + _quoted(root / "lib/vehicle_core") + " vehicle_core)\n"
+        "add_subdirectory(" + _quoted(root / "components/vehicle_core") + " vehicle_core)\n"
         "add_executable(core_only_consumer " + _quoted(source) + ")\n"
         "target_link_libraries(core_only_consumer PRIVATE vehicle_core)\n"
         "target_compile_features(core_only_consumer PRIVATE cxx_std_17)\n",
@@ -142,7 +142,7 @@ def _core_dependency_violations(
         return [f"core-only compile database is unreadable: {error}"]
     root = root.resolve()
     consumer_source = consumer_source.resolve()
-    target_source_root = (root / "lib/vehicle_core/src").resolve()
+    target_source_root = (root / "components/vehicle_core/src").resolve()
     matching: List[Tuple[object, Path]] = []
     for entry in entries:
         source = _compile_database_source(entry)
@@ -166,13 +166,21 @@ def _core_dependency_violations(
 
     violations: List[str] = []
     forbidden_parts = (
-        "components/",
         "freertos",
         "esp-idf",
         "esp/",
         "driver/twai",
         "sdkconfig",
     )
+    def is_forbidden(token: str) -> bool:
+        normalized = token.replace("\\", "/").lower()
+        # The component's own include/source paths are expected. Other
+        # components would invert the portable-core dependency boundary.
+        component_parts = normalized.split("components/")[1:]
+        if any(part and part.split("/", 1)[0] != "vehicle_core" for part in component_parts):
+            return True
+        return any(part in normalized for part in forbidden_parts)
+
     for index, (entry, source) in enumerate(matching):
         directory = entry.get("directory") if isinstance(entry, dict) else None
         cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
@@ -183,8 +191,7 @@ def _core_dependency_violations(
             else f"vehicle_core target ({source.relative_to(root).as_posix()})"
         )
         for token in tokens:
-            normalized = token.replace("\\", "/").lower()
-            if any(part in normalized for part in forbidden_parts):
+            if is_forbidden(token):
                 violations.append(f"forbidden {label} compile dependency: {token}")
         command_text = " ".join(tokens).replace("\\", "/").lower()
         depfile = work_dir / f"core_dependency_{index}.d"
@@ -203,8 +210,7 @@ def _core_dependency_violations(
             violations.append(f"{label} dependency probe produced no dependency data")
             continue
         for dependency in dependencies:
-            normalized = dependency.as_posix().lower()
-            if any(part in normalized for part in forbidden_parts):
+            if is_forbidden(dependency.as_posix()):
                 violations.append(f"forbidden {label} dependency: {dependency}")
     return list(dict.fromkeys(violations))
 
@@ -303,6 +309,26 @@ def _check_capture_removal(root: Path) -> None:
     print("OK   retired raw_capture product has no active code/build dependency")
 
 
+def _check_generic_runtime_surface(root: Path) -> None:
+    """Keep the injected runtime free of controller product vocabulary."""
+    runtime_root = root / "components/vehicle_telemetry"
+    forbidden = ("mazda", "lighting", "make/model", "signal_id", "facade")
+    violations: List[str] = []
+    if runtime_root.is_dir():
+        for path in runtime_root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
+                continue
+            text = path.read_text(encoding="utf-8").lower()
+            for marker in forbidden:
+                if marker in text:
+                    violations.append(
+                        f"{path.relative_to(root)} contains controller-only runtime marker {marker}"
+                    )
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print("OK   vehicle_telemetry runtime remains make-agnostic")
+
+
 def check(root: Path, cmake: str, compiler: Sequence[str]) -> int:
     root = root.resolve()
     with tempfile.TemporaryDirectory(prefix="vehicle-can-core-architecture-") as directory:
@@ -311,6 +337,7 @@ def check(root: Path, cmake: str, compiler: Sequence[str]) -> int:
             _check_core_only(root, cmake, compiler, work_dir)
             _check_adapter(root, cmake, compiler, root / "components/bench_can_ack/tests", work_dir)
             _check_capture_removal(root)
+            _check_generic_runtime_surface(root)
         except (ArchitectureFailure, OSError, ValueError) as error:
             print(f"ERROR: {error}", file=sys.stderr)
             return 1

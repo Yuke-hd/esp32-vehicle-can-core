@@ -8,8 +8,9 @@ controller repository.
 
 The intended package identity is `esp32-vehicle-can-core`. The current GitHub
 URL remains the migration origin until the repository is renamed by an
-administrator. Downstream consumers pin this repository as a Git submodule;
-see [`downstream-submodule.md`](downstream-submodule.md).
+administrator. Downstream consumers pin the generic components with host
+FetchContent or the ESP-IDF Component Manager; see
+[`consumer-integration.md`](consumer-integration.md).
 
 ## Pinned toolchains
 

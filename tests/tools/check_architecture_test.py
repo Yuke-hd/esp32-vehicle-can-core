@@ -22,15 +22,15 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="architecture-core-fixture-") as directory:
             root = Path(directory)
             shutil.copytree(
-                REPOSITORY_ROOT / "lib/vehicle_core",
-                root / "lib/vehicle_core",
+                REPOSITORY_ROOT / "components/vehicle_core",
+                root / "components/vehicle_core",
             )
-            source = root / "lib/vehicle_core/src/vehicle_core.cpp"
+            source = root / "components/vehicle_core/src/vehicle_core.cpp"
             source.write_text(
                 '#include "vehicle_core/vehicle_core.hpp"\n' + source.read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-            cmake = root / "lib/vehicle_core/CMakeLists.txt"
+            cmake = root / "components/vehicle_core/CMakeLists.txt"
             cmake.write_text(
                 cmake.read_text(encoding="utf-8")
                 + "\n"
