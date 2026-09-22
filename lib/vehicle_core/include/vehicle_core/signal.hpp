@@ -15,8 +15,8 @@ enum class SignalStatus : std::uint8_t { Unknown, Valid, Stale };
 // remains source-compatible with the Stage 0/1-A surface.
 enum class SignalUpdateResult : std::uint8_t { Rejected, Idempotent, Updated };
 
-// Generic metadata units. Mazda model/enumeration types live in lib/mazda;
-// the signal primitive does not depend on any vehicle definition.
+// Generic metadata units. Make/model enumerations belong to downstream
+// controller repositories; the signal primitive does not depend on them.
 enum class SignalUnit : std::uint8_t {
   None,
   KilometresPerHour,

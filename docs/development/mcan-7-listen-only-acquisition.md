@@ -1,9 +1,9 @@
 # MCAN-7 receive-only acquisition
 
-The source repository owns the shared receive-only can_bus component and the
-isolated bench adapter. It no longer owns a vehicle listen-only application or
-WeAct board binding. Those hardware-specific artifacts live in the
-[mazda-can-accessory-controller repository](https://github.com/Yuke-hd/mazda-can-accessory-controller).
+The source repository owns the shared receive-only `can_bus` component and the
+isolated bench adapter. It does not own a vehicle listen-only application,
+make/model decoder, or board product. Those artifacts live in a downstream
+controller repository that consumes this core as a pinned Git submodule.
 
 ## Safety boundary
 
@@ -11,7 +11,7 @@ The public can_bus header exposes lifecycle, receive, statistics, and
 configuration operations only. Its ESP-IDF implementation uses
 TWAI_MODE_LISTEN_ONLY for the receive-only binding supplied by downstream
 applications and has no data-frame transmit API. The separate
-tcan485-bench-ack-only project selects bench_can_ack and TWAI normal mode only
+`tcan485-bench-ack-only` project selects `bench_can_ack` and TWAI normal mode only
 on an isolated, protected classic-CAN bench so a compliant frame can be
 acknowledged. It must never be connected to a vehicle.
 

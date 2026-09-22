@@ -2,24 +2,24 @@
 
 The host gate consolidates architecture validation without making unfinished
 hardware work a prerequisite. It is registered once as the
-architecture_contracts CTest and retains only checks relevant to this source
-repository.
+`architecture_contracts` CTest and checks only the reusable core and isolated
+bench boundary.
 
 ## Compiled boundaries
 
 The gate configures and builds a temporary consumer against only
-lib/vehicle_core. The consumer links vehicle_core, exercises its portable
+`lib/vehicle_core`. The consumer links `vehicle_core`, exercises its portable
 frame-validity function, and checks value-copy reading/notification types. Its
-compile command and dependency output, together with vehicle_core translation
-units, are inspected for Mazda, ESP-IDF, RTOS, CAN-driver, and other component
-inputs.
+compile command and dependency output, together with `vehicle_core` translation
+units, are inspected for controller, ESP-IDF, RTOS, CAN-driver, and other
+component inputs.
 
 The gate also configures, builds, and runs the project-owned adapter tests in
 components/bench_can_ack/tests. These compile the real isolated-bench binding
 translation unit and assert its normal mode, fixed pins, and disabled
 data-frame queue. The T-CAN485 firmware project remains separately composed.
-Vehicle and WeAct adapter checks are owned by the
-[mazda-can-accessory-controller repository](https://github.com/Yuke-hd/mazda-can-accessory-controller).
+Make/model and product adapter checks are owned by the downstream controller
+repository that consumes this core.
 
 ## Retired capture check
 

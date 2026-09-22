@@ -16,16 +16,16 @@ Refs #
 
 ### Not included
 
-- WeAct/accessory-controller firmware and hardware validation; maintain those
-  changes in the dedicated accessory-controller repository.
+- Make/model decoders, vehicle services, and product firmware; maintain those
+  changes in the consuming controller repository.
 
 ## Safety impact
 
 - [ ] Any retained firmware target in this repository remains receive-only;
       active CAN transmission is confined to the explicitly isolated bench ACK
       target.
-- [ ] This repository does not own or build WeAct/accessory-controller vehicle
-      firmware; that implementation belongs in the dedicated repository.
+- [ ] This repository does not own or build a make/model vehicle product;
+      those artifacts belong in a consuming controller repository.
 - [ ] Startup, stale-data, reset, and failure behavior remain fail-silent.
 - [ ] No active CAN test target or BENCH_ACK_ONLY artifact can be mistaken for
       a vehicle build.
@@ -56,7 +56,7 @@ repository and whether it has a configured publishing remote. -->
 
 ## Hardware and data evidence
 
-<!-- Board revision, pins, bitrate, capture fixture, DBC source/commit, signal confidence. -->
+<!-- Board revision, pins, bitrate, capture fixture, or signal provenance. -->
 
 ## Privacy and third-party material
 

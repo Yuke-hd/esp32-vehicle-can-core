@@ -30,8 +30,8 @@ The `bench_can_ack` component owns the bench's compile-time
 `TWAI_MODE_NORMAL` and T-CAN485 CAN-pin binding. The shared `can_bus` component
 contains only the receive engine and has no mode selector. The bench project
 enumerates only `bench_can_ack`, and exposes no data-frame transmit operation.
-The WeAct/accessory-controller application is maintained separately in the
-[dedicated accessory repository](https://github.com/Yuke-hd/mazda-can-accessory-controller).
+Make/model controller applications are maintained separately in downstream
+repositories that consume this core as a pinned Git submodule.
 
 ## Build checks
 
@@ -55,7 +55,8 @@ from any unprotected automotive supply. Mark the board and its firmware
 artifact `T-CAN485 BENCH_ACK_ONLY — ISOLATED BENCH ONLY`.
 
 For final vehicle behavior, consult the strict listen-only target in the
-[dedicated accessory repository](https://github.com/Yuke-hd/mazda-can-accessory-controller).
+downstream controller repository. This bench artifact provides no vehicle
+behavior evidence.
 No raw vehicle captures, VIN, credentials, precise location, or reconstructable
 trip data belong in build evidence, Issues, PRs, or releases.
 

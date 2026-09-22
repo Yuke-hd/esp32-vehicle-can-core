@@ -35,11 +35,11 @@ jobs:
           cmake --version
           ninja --version
       - name: Configure host tests
-        run: cmake -S . -B "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+        run: cmake -S . -B "$RUNNER_TEMP/vehicle-can-core-host-${{ matrix.cmake }}" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
       - name: Build host tests
-        run: cmake --build "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" --parallel
+        run: cmake --build "$RUNNER_TEMP/vehicle-can-core-host-${{ matrix.cmake }}" --parallel
       - name: Run host tests
-        run: ctest --test-dir "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" --output-on-failure
+        run: ctest --test-dir "$RUNNER_TEMP/vehicle-can-core-host-${{ matrix.cmake }}" --output-on-failure
   host:
     runs-on: ubuntu-22.04
     env:
@@ -93,16 +93,15 @@ jobs:
           CC: clang-14
           CXX: clang++-14
         run: |
-          cmake -S . -B "$RUNNER_TEMP/mazda-host-sanitizers" -G Ninja \
+          cmake -S . -B "$RUNNER_TEMP/vehicle-can-core-host-sanitizers" -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON \
-            -DMAZDA_BUILD_HOST_TESTS=ON \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-      - name: Build portable and service tests with sanitizers
-        run: cmake --build "$RUNNER_TEMP/mazda-host-sanitizers" --parallel
-      - name: Run portable and service tests with sanitizers
-        run: ctest --test-dir "$RUNNER_TEMP/mazda-host-sanitizers" --output-on-failure
+      - name: Build portable core tests with sanitizers
+        run: cmake --build "$RUNNER_TEMP/vehicle-can-core-host-sanitizers" --parallel
+      - name: Run portable core tests with sanitizers
+        run: ctest --test-dir "$RUNNER_TEMP/vehicle-can-core-host-sanitizers" --output-on-failure
   firmware:
     runs-on: ubuntu-22.04
     env:

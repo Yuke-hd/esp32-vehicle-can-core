@@ -9,7 +9,7 @@ using MonotonicTimestamp = std::uint64_t;
 using Microseconds = std::uint64_t;
 
 // Production adapts its monotonic timer to this interface; host tests provide
-// a deterministic implementation. The telemetry service samples this private
+// a deterministic implementation. A downstream service may sample this
 // acquisition clock for transport receive liveness and silence timeouts.
 // RawCanFrame timestamps remain source observation data for decoder ordering.
 // The clock is borrowed and never owned.

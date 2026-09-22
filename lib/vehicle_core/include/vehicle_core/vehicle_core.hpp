@@ -1,8 +1,8 @@
 #pragma once
 
-// Compatibility umbrella for the portable vehicle_core primitives. Mazda
-// state, definitions, and decoders intentionally live under lib/mazda and are
-// available through mazda/state.hpp and mazda/decoder.hpp.
+// Compatibility umbrella for the portable vehicle_core primitives. Make/model
+// state, definitions, and decoders intentionally live in downstream
+// controller repositories.
 #include "vehicle_core/frame.hpp"
 #include "vehicle_core/signal.hpp"
 #include "vehicle_core/time.hpp"

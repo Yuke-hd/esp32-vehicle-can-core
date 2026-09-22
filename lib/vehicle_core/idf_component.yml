@@ -1,2 +1,2 @@
 version: "0.1.0"
-description: "Portable vehicle telemetry domain types"
+description: "Portable vehicle CAN and telemetry domain types"

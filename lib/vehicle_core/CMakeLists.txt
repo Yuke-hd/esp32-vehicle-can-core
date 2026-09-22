@@ -21,9 +21,9 @@ else()
 endif()
 
 # Portable latest-state notification delivery.  The implementation is
-# header-only so channel value types remain independent of Mazda and RTOS
-# headers; this target provides a stable module-local handoff for later service
-# composition.
+# Header-only so channel value types remain independent of make/model and RTOS
+# headers; this target provides a stable module-local handoff for downstream
+# service composition.
 add_library(vehicle_core_notifications INTERFACE)
 target_include_directories(vehicle_core_notifications INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

@@ -2,11 +2,9 @@
 """Run project-owned architecture contracts once per host suite.
 
 This host-only gate owns repository-wide checks that cannot live in one
-production target: the portable core must build without Mazda or RTOS inputs,
+production target: the portable core must build without controller or RTOS inputs,
 the isolated-bench binding must compile and exercise its project-owned mode
-contract, and retired capture code must stay absent. Public-header
-positive/negative checks remain the separate ``public_header_boundary`` and
-``public_header_checker_regression`` gates from Stage 1.5.
+contract, and retired capture code must stay absent.
 """
 
 from __future__ import annotations
@@ -168,7 +166,6 @@ def _core_dependency_violations(
 
     violations: List[str] = []
     forbidden_parts = (
-        "lib/mazda",
         "components/",
         "freertos",
         "esp-idf",
@@ -190,8 +187,6 @@ def _core_dependency_violations(
             if any(part in normalized for part in forbidden_parts):
                 violations.append(f"forbidden {label} compile dependency: {token}")
         command_text = " ".join(tokens).replace("\\", "/").lower()
-        if "/lib/mazda/" in command_text or "lib/mazda/" in command_text:
-            violations.append(f"{label} compile command mentions Mazda")
         depfile = work_dir / f"core_dependency_{index}.d"
         dependency_probe = _run(
             [*tokens, "-MMD", "-MF", str(depfile), "-MT", str(source)],
@@ -237,7 +232,7 @@ def _check_core_only(root: Path, cmake: str, compiler: Sequence[str], work_dir: 
     )
     if violations:
         raise ArchitectureFailure("\n".join(violations))
-    print("OK   vehicle_core builds and links without Mazda/RTOS dependencies")
+    print("OK   vehicle_core builds and links without controller/RTOS dependencies")
 
 
 def _check_adapter(
@@ -310,7 +305,7 @@ def _check_capture_removal(root: Path) -> None:
 
 def check(root: Path, cmake: str, compiler: Sequence[str]) -> int:
     root = root.resolve()
-    with tempfile.TemporaryDirectory(prefix="mazda-architecture-") as directory:
+    with tempfile.TemporaryDirectory(prefix="vehicle-can-core-architecture-") as directory:
         work_dir = Path(directory)
         try:
             _check_core_only(root, cmake, compiler, work_dir)

@@ -20,7 +20,7 @@ Repository artifacts are classified as follows:
 | --- | --- | --- |
 | Project source and tooling | Apache-2.0 | Keep the root `LICENSE` and preserve contributor copyright notices. |
 | Project documentation and tests | Apache-2.0 | Mark any third-party excerpt or asset separately; do not imply that a third-party work is Apache-2.0. |
-| Generated signal definitions | Provenance-dependent | Record the input files, exact source commit, generator/version, and modifications. Definitions generated from opendbc retain the applicable MIT attribution and are not automatically Apache-2.0. Definitions derived only from project-authored rules must still include evidence and vehicle-validation status. |
+| Generated signal definitions | Downstream responsibility | This core does not ship make/model signal definitions. A downstream controller must record input files, exact source commit, generator/version, modifications, attribution, and vehicle-validation status. |
 | Raw vehicle captures | Never accepted as a repository artifact | Do not commit, paste or attach raw captures or their contents in an Issue/PR, include them in a release, or link to them externally. A PR may describe that private evidence was used without exposing the capture or its contents. They may remain in an approved private workspace only with the data owner's authorization and suitable access controls. |
 | Anonymized replay fixtures | Explicitly reviewed fixture | May be committed only after the checklist below is complete, the submitter attests to sharing authority, and a maintainer records the review. Fixtures must contain no credentials, VIN, precise location, or reconstructable private trip. |
 | Issue/PR logs and screenshots | Public by default | Treat as publishable. Use synthetic values and sanitized screenshots; never paste raw captures or secrets. |
@@ -32,10 +32,8 @@ whose provenance or privacy status cannot be established.
 
 ## Third-party attribution
 
-The project uses comma.ai/opendbc as a candidate signal lead. Its upstream
-project is MIT-licensed. `THIRD_PARTY_NOTICES.md` is the attribution index and
-must be updated before any opendbc file, generated output, or copied excerpt is
-committed. For every imported or generated item, record:
+`THIRD_PARTY_NOTICES.md` is the attribution index. Before adding any
+third-party source, generated protocol artifact, or copied excerpt, record:
 
 1. upstream repository and file path;
 2. exact commit or release, never a floating branch;
@@ -44,10 +42,8 @@ committed. For every imported or generated item, record:
 5. local modifications or generator steps; and
 6. where the attribution appears in the distributed artifact.
 
-Do not combine an opendbc-derived definition with the project's Apache-2.0
-notice in a way that suggests the upstream material was relicensed. Keep
-vehicle-specific validation evidence separate from upstream provenance: an
-opendbc definition is a lead until verified against the target vehicle.
+Make/model protocol evidence and vehicle-specific validation remain outside
+this core and must be governed by the consuming controller repository.
 
 ## Vehicle-data handling
 

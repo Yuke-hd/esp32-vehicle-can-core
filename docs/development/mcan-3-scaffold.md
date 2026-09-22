@@ -1,14 +1,15 @@
-# MCAN-3 scaffold
+# ESP32 vehicle CAN core scaffold
 
-This repository contains the portable Mazda CAN telemetry decoder, service
-contracts, receive-only CAN primitives, and the isolated T-CAN485 bench
-firmware. The WeAct/accessory-controller firmware moved to the dedicated
-[mazda-can-accessory-controller repository](https://github.com/Yuke-hd/mazda-can-accessory-controller);
-this repository is not the owner of that hardware-specific application.
+This repository contains the portable vehicle CAN core, receive-only ESP-IDF
+transport, and isolated T-CAN485 bench-ACK firmware. It is intentionally not a
+vehicle product repository: make/model decoders, telemetry services, lighting
+policy, board support, DBC files, and vehicle captures belong in a consuming
+controller repository.
 
-The scaffold does not decode private captures, export telemetry, or provide a
-vehicle-side CAN data-generation path. Raw vehicle captures remain private
-analysis data.
+The intended package identity is `esp32-vehicle-can-core`. The current GitHub
+URL remains the migration origin until the repository is renamed by an
+administrator. Downstream consumers pin this repository as a Git submodule;
+see [`downstream-submodule.md`](downstream-submodule.md).
 
 ## Pinned toolchains
 
@@ -23,34 +24,12 @@ using the exact doctest commit above.
 
 ## Reproducible commands
 
-From the repository root, run the following commands:
+From the repository root:
 
     python3 tools/check_toolchain.py --scope host
     cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
     cmake --build build/host --parallel
     ctest --test-dir build/host --output-on-failure
 
-For the retained isolated bench firmware, activate ESP-IDF v5.5.4, verify
-the firmware scope, and run:
-
-    python3 tools/check_toolchain.py --scope firmware
-    cd firmware/tcan485-bench-ack-only
-    idf.py set-target esp32
-    idf.py build
-
-## Safety and scope
-
-The shared can_bus component is receive-only. The
-tcan485-bench-ack-only project is separately named, uses the
-bench_can_ack normal-mode binding only for isolated classic-CAN
-acknowledgement, and must never be connected to a vehicle. No product or
-vehicle firmware is built by this repository.
-
-The accessory repository owns WeAct board pin records, vehicle listen-only
-composition, concrete lighting policy/renderer components, and their hardware
-validation. Keep those changes and releases in that repository.
-
-Dependency source, exact version/commit, role, and upstream license links are
-recorded in THIRD_PARTY_NOTICES.md. Privacy, license, attribution,
-receive-only, and bench-isolation rules remain authoritative in
-CONTRIBUTING.md.
+For the retained isolated bench firmware, activate ESP-IDF v5.5.4, verify the
+firmware scope, and build `firmware/tcan485-bench-ack-only` with `idf.py`.
