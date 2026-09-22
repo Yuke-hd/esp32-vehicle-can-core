@@ -276,6 +276,7 @@ template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor fin
   ChannelMember channel{nullptr};
   SignalMember signal{nullptr};
   std::uint32_t identifier{0};
+  ValidationStatus validation{ValidationStatus::Reference};
 };
 
 #if defined(ESP_PLATFORM)
