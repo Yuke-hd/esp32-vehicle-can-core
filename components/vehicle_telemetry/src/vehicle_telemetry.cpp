@@ -25,6 +25,10 @@ namespace {
 constexpr std::uint64_t kNanosecondsPerMicrosecond = 1'000;
 constexpr vehicle_core::Microseconds kLightingHeartbeatUs = 100'000;
 constexpr std::uint16_t kInvalidChannel = 0xffffU;
+// This counter is deliberately never reset while the process is alive. The
+// value is stored in each execution context's TLS, so a recycled TLS address
+// or FreeRTOS task handle cannot recreate an earlier lifecycle identity.
+std::atomic<std::uint64_t> g_next_execution_identity{1};
 #if defined(ESP_PLATFORM)
 // Keep task polling cooperative even when the configured tick rate truncates
 // a one-millisecond delay to zero ticks.
@@ -325,16 +329,14 @@ VehicleTelemetryService::VehicleTelemetryService() noexcept
   processing_state_.apply_freshness_policy(config_.freshness);
 }
 
-void *VehicleTelemetryService::current_execution_identity() noexcept {
-#if defined(ESP_PLATFORM)
-  return reinterpret_cast<void *>(xTaskGetCurrentTaskHandle());
-#else
-  // The marker's address is stable for the lifetime of the calling thread,
-  // does not allocate, and cannot collide between concurrently running host
-  // threads while this service is alive.
-  static thread_local std::uint8_t thread_marker = 0;
-  return static_cast<void *>(&thread_marker);
-#endif
+VehicleTelemetryService::ExecutionIdentity
+VehicleTelemetryService::current_execution_identity() noexcept {
+  // A monotonically assigned value is stable for this execution context but
+  // remains unique after its TLS storage or FreeRTOS task handle is recycled.
+  // The counter is bounded by uint64_t and this path performs no allocation.
+  static thread_local const ExecutionIdentity execution_identity =
+      g_next_execution_identity.fetch_add(1, std::memory_order_relaxed);
+  return execution_identity;
 }
 
 bool VehicleTelemetryService::callback_mutation_rejected() const noexcept {
@@ -342,7 +344,7 @@ bool VehicleTelemetryService::callback_mutation_rejected() const noexcept {
 }
 
 bool VehicleTelemetryService::claim_or_validate_lifecycle_owner() noexcept {
-  if (lifecycle_owner_identity_ == nullptr)
+  if (lifecycle_owner_identity_ == kNoExecutionIdentity)
     lifecycle_owner_identity_ = current_execution_identity();
   return lifecycle_owner_identity_ == current_execution_identity();
 }
@@ -817,7 +819,7 @@ void VehicleTelemetryService::dispatcher_loop() noexcept {
     // before lifecycle state or the acquisition source is touched.
     callback_context_identity_.store(current_execution_identity(), std::memory_order_release);
     const std::size_t delivered = dispatch_channels_once();
-    callback_context_identity_.store(nullptr, std::memory_order_release);
+    callback_context_identity_.store(kNoExecutionIdentity, std::memory_order_release);
     if (delivered == 0) {
 #if defined(ESP_PLATFORM)
       vTaskDelay(kMinimumTaskDelayTicks);

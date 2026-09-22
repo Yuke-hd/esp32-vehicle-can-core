@@ -418,11 +418,13 @@ private:
   [[nodiscard]] static ResultCode
   map_notification_status(vehicle_core::NotificationStatus status) noexcept;
 
-  // Host builds use the address of a thread-local marker as a stable,
-  // allocation-free thread identity. ESP-IDF builds use the current FreeRTOS
-  // task handle. The identity is only used for the lifecycle-owner and
-  // callback re-entry contracts; polling and diagnostics remain unrestricted.
-  [[nodiscard]] static void *current_execution_identity() noexcept;
+  // Execution identities are process-lifetime generation tokens. A token is
+  // bounded to 64 bits, requires no allocation, and is assigned once per
+  // host thread or ESP-IDF task. Do not use a TLS address or FreeRTOS task
+  // handle directly: both may be recycled after their owner exits.
+  using ExecutionIdentity = std::uint64_t;
+  static constexpr ExecutionIdentity kNoExecutionIdentity{0};
+  [[nodiscard]] static ExecutionIdentity current_execution_identity() noexcept;
   [[nodiscard]] bool callback_mutation_rejected() const noexcept;
   // Must be called while lifecycle_mutex_ is held. The first lifecycle
   // mutation establishes ownership; all later mutations must use that same
@@ -513,12 +515,12 @@ private:
   // stable across stop/start cycles and is checked before every subsequent
   // lifecycle mutation. Setup registration/configuration therefore has the
   // same single-context contract as runtime start/stop.
-  void *lifecycle_owner_identity_{nullptr};
+  ExecutionIdentity lifecycle_owner_identity_{kNoExecutionIdentity};
   // Set only around the bounded dispatcher call that can invoke a user
   // callback. It lets callback-originated mutations reject before acquiring
   // lifecycle state or touching the source, including a callback that calls
   // stop() on the owner thread.
-  std::atomic<void *> callback_context_identity_{nullptr};
+  std::atomic<ExecutionIdentity> callback_context_identity_{kNoExecutionIdentity};
   std::atomic<LifecycleState> lifecycle_state_{LifecycleState::Stopped};
   std::atomic<bool> run_requested_{false};
   std::atomic<bool> processing_done_{true};

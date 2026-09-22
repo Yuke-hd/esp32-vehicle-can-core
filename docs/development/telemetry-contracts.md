@@ -44,7 +44,10 @@ stopped-only operations. The host thread or ESP-IDF task that performs the
 first lifecycle mutation (configure, subscription, sink binding, start, or
 stop) is its lifecycle owner and must perform later lifecycle mutations,
 including stop/start cycles. Polling and diagnostics are
-context-independent.
+context-independent. The implementation records that owner with a bounded,
+allocation-free 64-bit generation token rather than a thread-local address or
+FreeRTOS task handle, so sequential host threads and recycled ESP-IDF task
+handles cannot inherit an earlier owner's identity.
 
 Callbacks receive copied values and borrow their caller-provided context until
 `stop()` returns successfully. Callback-originated `configure`, `start`,

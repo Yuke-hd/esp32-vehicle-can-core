@@ -626,6 +626,33 @@ void test_non_owner_lifecycle_mutation_is_rejected_without_source_side_effect() 
   EXPECT(service.unsubscribe(subscription).ok());
 }
 
+void test_sequential_host_threads_cannot_inherit_lifecycle_ownership() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  // The owner exits before the next thread is created. A TLS marker address
+  // can be recycled in that gap; a generation token must still reject every
+  // later context as a non-owner.
+  std::atomic<mazda::ResultCode> owner_result{mazda::ResultCode::Faulted};
+  std::thread owner([&service, &config, &owner_result] {
+    owner_result.store(service.configure(config).status, std::memory_order_release);
+  });
+  owner.join();
+  EXPECT(owner_result.load(std::memory_order_acquire) == mazda::ResultCode::Ok);
+
+  for (std::size_t attempt = 0; attempt < 32; ++attempt) {
+    std::atomic<mazda::ResultCode> contender_result{mazda::ResultCode::Ok};
+    std::thread contender([&service, &config, &contender_result] {
+      contender_result.store(service.configure(config).status, std::memory_order_release);
+    });
+    contender.join();
+    EXPECT(contender_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  }
+}
+
 void test_added_poll_and_notify_signals_use_service_workers() {
   FakeClock clock;
   mazda::internal::HostAcquisitionSource source;
@@ -1374,6 +1401,7 @@ int main() {
   test_lifecycle_state_precedes_configuration_validation();
   test_callback_mutations_are_rejected_before_side_effects();
   test_non_owner_lifecycle_mutation_is_rejected_without_source_side_effect();
+  test_sequential_host_threads_cannot_inherit_lifecycle_ownership();
   test_added_poll_and_notify_signals_use_service_workers();
   test_notifications_preserve_metadata_confidence();
   test_lighting_sink_binding_is_stopped_only();
