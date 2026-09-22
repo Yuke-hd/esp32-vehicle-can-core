@@ -34,6 +34,13 @@ public:
     std::lock_guard<std::mutex> lock{mutex_};
     if (started_)
       return {vehicle_telemetry::ResultCode::AlreadyRunning};
+    if (start_result_ != vehicle_telemetry::ResultCode::Ok) {
+      if (start_failure_owns_source_) {
+        started_ = true;
+        stop_requested_ = false;
+      }
+      return {start_result_};
+    }
     started_ = true;
     stop_requested_ = false;
     faulted_ = false;
@@ -45,9 +52,10 @@ public:
     ++stop_calls_;
     if (!started_)
       return {vehicle_telemetry::ResultCode::NotRunning};
-    started_ = false;
     stop_requested_ = true;
     condition_.notify_all();
+    if (stop_result_ == vehicle_telemetry::ResultCode::Ok)
+      started_ = false;
     return {stop_result_};
   }
 
@@ -100,6 +108,13 @@ public:
     stop_result_ = result;
   }
 
+  void set_start_result(const vehicle_telemetry::ResultCode result,
+                        const bool owns_source) noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    start_result_ = result;
+    start_failure_owns_source_ = owns_source;
+  }
+
 private:
   const std::size_t capacity_;
   mutable std::mutex mutex_{};
@@ -107,7 +122,9 @@ private:
   std::deque<vehicle_core::RawCanFrame> frames_{};
   vehicle_telemetry::AcquisitionStatistics statistics_{};
   std::uint32_t stop_calls_{0};
+  vehicle_telemetry::ResultCode start_result_{vehicle_telemetry::ResultCode::Ok};
   vehicle_telemetry::ResultCode stop_result_{vehicle_telemetry::ResultCode::Ok};
+  bool start_failure_owns_source_{false};
   bool started_{false};
   bool stop_requested_{false};
   bool faulted_{false};
@@ -211,7 +228,7 @@ TEST_CASE("generic runtime accepts an injected fake processor and source") {
   clock.set(42);
   vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
 
-  CHECK(runtime.configure({10, 100}).ok());
+  CHECK(runtime.configure({10, 100'000}).ok());
   REQUIRE(runtime.start().ok());
   REQUIRE(source.inject(frame(0x123)));
   REQUIRE(observer.wait_for_frame(1));
@@ -230,16 +247,109 @@ TEST_CASE("generic runtime serializes lifecycle and source ownership") {
   RecordingObserver observer;
   vehicle_telemetry::Runtime runtime{source, processor, observer};
 
-  CHECK(runtime.configure({0, 100}).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
-  CHECK(runtime.configure({10, 5}).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
-  CHECK(runtime.configure({10, 100}).ok());
+  CHECK(runtime.configure({0, 100'000}).status ==
+        vehicle_telemetry::ResultCode::InvalidConfiguration);
+  CHECK(runtime.configure({10, 0}).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  CHECK(runtime.configure({10, 100'000}).ok());
   REQUIRE(runtime.start().ok());
   CHECK(runtime.start().status == vehicle_telemetry::ResultCode::AlreadyRunning);
-  CHECK(runtime.configure({10, 100}).status == vehicle_telemetry::ResultCode::InvalidState);
+  CHECK(runtime.configure({10, 100'000}).status == vehicle_telemetry::ResultCode::InvalidState);
   CHECK(runtime.stop().ok());
   CHECK(runtime.stop().status == vehicle_telemetry::ResultCode::NotRunning);
   CHECK(processor.reset_count == 1);
   CHECK(source.stop_calls() == 1);
+}
+
+TEST_CASE("generic runtime keeps non-owning start failures restartable") {
+  FakeSource source;
+  source.set_start_result(vehicle_telemetry::ResultCode::InvalidConfiguration, false);
+  CountingProcessor processor;
+  RecordingObserver observer;
+  vehicle_telemetry::Runtime runtime{source, processor, observer};
+
+  REQUIRE(runtime.configure({10, 100'000}).ok());
+  CHECK(runtime.start().status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  CHECK(runtime.lifecycle() == vehicle_telemetry::LifecycleState::Stopped);
+  CHECK(source.stop_calls() == 0);
+
+  source.set_start_result(vehicle_telemetry::ResultCode::Ok, false);
+  REQUIRE(runtime.start().ok());
+  CHECK(runtime.stop().ok());
+  CHECK(source.stop_calls() == 1);
+}
+
+TEST_CASE("generic runtime never stops a source it did not start") {
+  FakeSource source;
+  REQUIRE(source.start().ok());
+  CountingProcessor processor;
+  RecordingObserver observer;
+  vehicle_telemetry::Runtime runtime{source, processor, observer};
+
+  REQUIRE(runtime.configure({10, 100'000}).ok());
+  CHECK(runtime.start().status == vehicle_telemetry::ResultCode::AlreadyRunning);
+  CHECK(runtime.lifecycle() == vehicle_telemetry::LifecycleState::Stopped);
+  CHECK(source.stop_calls() == 0);
+  CHECK(source.stop().ok());
+}
+
+TEST_CASE("generic runtime reconciles a failed start with no source ownership") {
+  FakeSource source;
+  source.set_start_result(vehicle_telemetry::ResultCode::Faulted, false);
+  CountingProcessor processor;
+  RecordingObserver observer;
+  vehicle_telemetry::Runtime runtime{source, processor, observer};
+
+  REQUIRE(runtime.configure({10, 100'000}).ok());
+  CHECK(runtime.start().status == vehicle_telemetry::ResultCode::Faulted);
+  CHECK(runtime.lifecycle() == vehicle_telemetry::LifecycleState::Stopped);
+  CHECK(source.stop_calls() == 1);
+
+  source.set_start_result(vehicle_telemetry::ResultCode::Ok, false);
+  REQUIRE(runtime.start().ok());
+  CHECK(runtime.stop().ok());
+  CHECK(source.stop_calls() == 2);
+}
+
+TEST_CASE("generic runtime cleans partial starts and remains restartable") {
+  FakeSource source;
+  source.set_start_result(vehicle_telemetry::ResultCode::Faulted, true);
+  CountingProcessor processor;
+  RecordingObserver observer;
+  vehicle_telemetry::Runtime runtime{source, processor, observer};
+
+  REQUIRE(runtime.configure({10, 100'000}).ok());
+  CHECK(runtime.start().status == vehicle_telemetry::ResultCode::Faulted);
+  CHECK(runtime.lifecycle() == vehicle_telemetry::LifecycleState::Stopped);
+  CHECK(source.stop_calls() == 1);
+
+  source.set_start_result(vehicle_telemetry::ResultCode::Ok, false);
+  REQUIRE(runtime.start().ok());
+  CHECK(runtime.stop().ok());
+  CHECK(source.stop_calls() == 2);
+}
+
+TEST_CASE("generic runtime retries failed partial-start cleanup once") {
+  FakeSource source;
+  source.set_start_result(vehicle_telemetry::ResultCode::Faulted, true);
+  source.set_stop_result(vehicle_telemetry::ResultCode::Faulted);
+  CountingProcessor processor;
+  RecordingObserver observer;
+  vehicle_telemetry::Runtime runtime{source, processor, observer};
+
+  REQUIRE(runtime.configure({10, 100'000}).ok());
+  CHECK(runtime.start().status == vehicle_telemetry::ResultCode::Faulted);
+  CHECK(runtime.lifecycle() == vehicle_telemetry::LifecycleState::Faulted);
+  CHECK(source.stop_calls() == 1);
+
+  source.set_stop_result(vehicle_telemetry::ResultCode::Ok);
+  CHECK(runtime.stop().ok());
+  CHECK(runtime.lifecycle() == vehicle_telemetry::LifecycleState::Stopped);
+  CHECK(source.stop_calls() == 2);
+
+  source.set_start_result(vehicle_telemetry::ResultCode::Ok, false);
+  REQUIRE(runtime.start().ok());
+  CHECK(runtime.stop().ok());
+  CHECK(source.stop_calls() == 3);
 }
 
 TEST_CASE("generic runtime reports injected-clock transport silence") {
@@ -249,13 +359,15 @@ TEST_CASE("generic runtime reports injected-clock transport silence") {
   ManualClock clock;
   vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
 
-  REQUIRE(runtime.configure({2, 10}).ok());
+  REQUIRE(runtime.configure({1, 100}).ok());
   REQUIRE(runtime.start().ok());
   clock.set(1'000);
   REQUIRE(source.inject(frame(0x321)));
   REQUIRE(observer.wait_for_frame(1));
-  clock.set(20'000);
-  REQUIRE(observer.wait_for_transport(vehicle_core::TransportHealth::TimedOut));
+  clock.set(1'099);
+  CHECK(runtime.diagnostics().transport == vehicle_core::TransportHealth::Live);
+  clock.set(1'100);
+  CHECK(runtime.diagnostics().transport == vehicle_core::TransportHealth::TimedOut);
   CHECK(runtime.stop().ok());
 }
 
@@ -265,7 +377,7 @@ TEST_CASE("generic runtime latches source faults and makes bounded progress") {
   RecordingObserver observer;
   vehicle_telemetry::Runtime runtime{source, processor, observer};
 
-  REQUIRE(runtime.configure({2, 100}).ok());
+  REQUIRE(runtime.configure({2, 100'000}).ok());
   REQUIRE(runtime.start().ok());
   source.fail();
   REQUIRE(observer.wait_for_lifecycle(vehicle_telemetry::LifecycleState::Faulted));
@@ -275,7 +387,7 @@ TEST_CASE("generic runtime latches source faults and makes bounded progress") {
   BlockingProcessor blocking_processor;
   RecordingObserver bounded_observer;
   vehicle_telemetry::Runtime bounded_runtime{bounded_source, blocking_processor, bounded_observer};
-  REQUIRE(bounded_runtime.configure({2, 100}).ok());
+  REQUIRE(bounded_runtime.configure({2, 100'000}).ok());
   REQUIRE(bounded_runtime.start().ok());
   REQUIRE(bounded_source.inject(frame(1)));
   for (int attempt = 0;
@@ -298,7 +410,7 @@ TEST_CASE("generic runtime stops a non-idempotent source once during timeout and
   RecordingObserver observer;
   {
     vehicle_telemetry::Runtime runtime{source, processor, observer};
-    REQUIRE(runtime.configure({2, 100}).ok());
+    REQUIRE(runtime.configure({2, 100'000}).ok());
     REQUIRE(runtime.start().ok());
     CHECK(runtime.stop().status == vehicle_telemetry::ResultCode::Timeout);
   }

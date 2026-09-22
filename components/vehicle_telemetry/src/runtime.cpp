@@ -18,18 +18,12 @@ namespace vehicle_telemetry {
 namespace {
 
 constexpr std::uint32_t kMaximumReceiveTimeoutMs = 60'000;
-constexpr std::uint32_t kMaximumSilenceTimeoutMs = 300'000;
+constexpr vehicle_core::Microseconds kMaximumSilenceTimeoutUs = 300'000'000;
 
 [[nodiscard]] bool valid_config(const RuntimeConfig &config) noexcept {
   return config.receive_timeout_ms != 0 && config.receive_timeout_ms <= kMaximumReceiveTimeoutMs &&
-         config.transport_silence_timeout_ms >= config.receive_timeout_ms &&
-         config.transport_silence_timeout_ms <= kMaximumSilenceTimeoutMs;
-}
-
-[[nodiscard]] std::uint64_t
-milliseconds_to_microseconds(const std::uint32_t milliseconds) noexcept {
-  constexpr std::uint64_t kMicrosPerMillisecond = 1'000;
-  return static_cast<std::uint64_t>(milliseconds) * kMicrosPerMillisecond;
+         config.transport_silence_timeout_us != 0 &&
+         config.transport_silence_timeout_us <= kMaximumSilenceTimeoutUs;
 }
 
 class SystemMonotonicClock final : public vehicle_core::MonotonicClock {
@@ -82,10 +76,30 @@ public:
     processor_->reset();
     const auto source_result = source_->start();
     if (!source_result.ok()) {
-      update_after_start_failure(source_result.status);
+      if (!start_failure_may_own_source(source_result.status)) {
+        update_after_start_failure(source_result.status);
+        return source_result;
+      }
+
+      // A source may have installed part of its acquisition boundary before
+      // reporting a driver/task failure. This is a separate partial-start
+      // ownership interval from a successful run, so it has its own bounded
+      // two-attempt cleanup contract.
+      source_started_ = true;
+      source_ownership_ = SourceOwnership::PartialStart;
+      partial_cleanup_attempts_ = 0;
+      const auto cleanup_result = attempt_partial_start_cleanup();
+      if (cleanup_result.ok()) {
+        lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
+        set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+      } else {
+        lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
+        set_lifecycle_diagnostic(LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted);
+      }
       return source_result;
     }
     source_started_ = true;
+    source_ownership_ = SourceOwnership::SuccessfulStart;
     source_stop_called_ = false;
     source_stop_result_ = {ResultCode::Ok};
 
@@ -140,6 +154,23 @@ public:
     if (state == LifecycleState::Stopped && !source_started_)
       return {ResultCode::NotRunning};
 
+    if (source_ownership_ == SourceOwnership::PartialStart) {
+      lifecycle_.store(LifecycleState::Stopping, std::memory_order_release);
+      set_lifecycle_diagnostic(LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped);
+      const auto cleanup_result = attempt_partial_start_cleanup();
+      if (cleanup_result.ok()) {
+        lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
+        set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+        return {ResultCode::Ok};
+      }
+      lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
+      set_lifecycle_diagnostic(LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted);
+      if (cleanup_result.status == ResultCode::Timeout ||
+          cleanup_result.status == ResultCode::Stopping)
+        return {ResultCode::Timeout};
+      return {ResultCode::Faulted};
+    }
+
     if (state != LifecycleState::Stopping)
       lifecycle_.store(LifecycleState::Stopping, std::memory_order_release);
     set_lifecycle_diagnostic(LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped);
@@ -181,10 +212,13 @@ public:
 
   [[nodiscard]] TransportDiagnostics diagnostics() const noexcept {
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
+    update_silence_diagnostic_locked();
     return diagnostics_;
   }
 
 private:
+  enum class SourceOwnership : std::uint8_t { None, SuccessfulStart, PartialStart };
+
   [[nodiscard]] static ResultCode lifecycle_result(const LifecycleState state) noexcept {
     switch (state) {
     case LifecycleState::Running:
@@ -205,6 +239,10 @@ private:
                                                           : vehicle_core::TransportHealth::Stopped);
   }
 
+  [[nodiscard]] static bool start_failure_may_own_source(const ResultCode status) noexcept {
+    return status != ResultCode::AlreadyRunning && status != ResultCode::InvalidConfiguration;
+  }
+
   void set_lifecycle_diagnostic(const LifecycleState lifecycle,
                                 const vehicle_core::TransportHealth transport) noexcept {
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
@@ -213,8 +251,19 @@ private:
     diagnostics_.acquisition = source_->statistics();
   }
 
+  void update_silence_diagnostic_locked() const noexcept {
+    if (lifecycle_.load(std::memory_order_acquire) != LifecycleState::Running ||
+        !diagnostics_.has_last_frame)
+      return;
+    const auto now = clock_->now();
+    if (now >= diagnostics_.last_frame_us &&
+        now - diagnostics_.last_frame_us >= config_.transport_silence_timeout_us)
+      diagnostics_.transport = vehicle_core::TransportHealth::TimedOut;
+  }
+
   [[nodiscard]] StatusResult stop_source_once() noexcept {
-    if (!source_started_ || source_stop_called_)
+    if (source_ownership_ != SourceOwnership::SuccessfulStart || !source_started_ ||
+        source_stop_called_)
       return source_stop_result_;
     source_stop_called_ = true;
     source_stop_result_ = source_->stop();
@@ -222,13 +271,34 @@ private:
     // bounded timeout. A subsequent Runtime::stop() retries only the worker
     // join; it never invokes a non-idempotent source twice.
     source_started_ = false;
+    source_ownership_ = SourceOwnership::None;
+    return source_stop_result_;
+  }
+
+  [[nodiscard]] StatusResult attempt_partial_start_cleanup() noexcept {
+    if (source_ownership_ != SourceOwnership::PartialStart || !source_started_)
+      return {ResultCode::Ok};
+    if (partial_cleanup_attempts_ >= 2)
+      return source_stop_result_;
+
+    ++partial_cleanup_attempts_;
+    source_stop_result_ = source_->stop();
+    if (source_stop_result_.ok() || source_stop_result_.status == ResultCode::NotRunning) {
+      source_started_ = false;
+      source_ownership_ = SourceOwnership::None;
+      // NotRunning is a successful defensive reconciliation: the source
+      // confirms that the failed start never acquired an owned boundary.
+      source_stop_result_ = {ResultCode::Ok};
+    }
     return source_stop_result_;
   }
 
   void shutdown_noexcept() noexcept {
     stop_requested_.store(true, std::memory_order_release);
-    if (source_started_)
+    if (source_ownership_ == SourceOwnership::SuccessfulStart)
       (void)stop_source_once();
+    else if (source_ownership_ == SourceOwnership::PartialStart)
+      (void)attempt_partial_start_cleanup();
 #if !defined(ESP_PLATFORM)
     if (worker_.joinable() && worker_.get_id() != std::this_thread::get_id())
       worker_.join();
@@ -275,14 +345,8 @@ private:
         }
       }
     } else if (status == ReceiveStatus::Timeout) {
-      const auto now = clock_->now();
-      const auto timeout_us = milliseconds_to_microseconds(config_.transport_silence_timeout_ms);
-      if (diagnostics_.has_last_frame && now >= diagnostics_.last_frame_us &&
-          now - diagnostics_.last_frame_us > timeout_us) {
-        diagnostics_.transport = vehicle_core::TransportHealth::TimedOut;
-      } else {
-        diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
-      }
+      diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
+      update_silence_diagnostic_locked();
     } else if (status == ReceiveStatus::Fault || status == ReceiveStatus::NotStarted) {
       diagnostics_.lifecycle = LifecycleState::Faulted;
       diagnostics_.transport = vehicle_core::TransportHealth::Faulted;
@@ -336,12 +400,14 @@ private:
   mutable std::mutex lifecycle_mutex_{};
   mutable std::mutex diagnostics_mutex_{};
   RuntimeConfig config_{};
-  TransportDiagnostics diagnostics_{};
+  mutable TransportDiagnostics diagnostics_{};
   std::atomic<LifecycleState> lifecycle_{LifecycleState::Stopped};
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> worker_active_{false};
   bool source_started_{false};
+  SourceOwnership source_ownership_{SourceOwnership::None};
   bool source_stop_called_{false};
+  std::uint8_t partial_cleanup_attempts_{0};
   StatusResult source_stop_result_{ResultCode::Ok};
 #if defined(ESP_PLATFORM)
   TaskHandle_t task_{nullptr};

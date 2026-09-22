@@ -26,8 +26,9 @@ public:
   [[nodiscard]] virtual StatusResult start() noexcept = 0;
   // stop() is a one-shot ownership handoff for each successful start. It
   // must request cancellation of receive() before returning, including when
-  // it reports Timeout or Stopping. Runtime never calls stop() twice for one
-  // acquisition interval; a later Runtime::stop() only waits for the worker.
+  // it reports Timeout or Stopping. Runtime never calls stop() twice for a
+  // successful-start interval; a failed partial-start interval may receive
+  // one bounded cleanup retry from a later Runtime::stop().
   [[nodiscard]] virtual StatusResult stop() noexcept = 0;
   [[nodiscard]] virtual ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
                                               std::uint32_t timeout_ms) noexcept = 0;

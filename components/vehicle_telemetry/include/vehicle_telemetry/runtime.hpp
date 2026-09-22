@@ -10,8 +10,11 @@
 namespace vehicle_telemetry {
 
 struct RuntimeConfig final {
+  // Acquisition sources use this bounded poll interval. Silence monitoring
+  // uses an independent monotonic-clock value so sub-millisecond policies do
+  // not get rounded up to the receive poll interval.
   std::uint32_t receive_timeout_ms{100};
-  std::uint32_t transport_silence_timeout_ms{1'000};
+  vehicle_core::Microseconds transport_silence_timeout_us{1'000'000};
 };
 
 class Runtime final {
