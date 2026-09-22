@@ -348,6 +348,17 @@ void record_validation(void *context, const mazda::Notification<T> &notice) noex
   recorder.changed.notify_all();
 }
 
+struct LifecycleMutationRecorder final {
+  mazda::internal::VehicleTelemetryService *service{nullptr};
+  mazda::internal::SubscriptionToken subscription{};
+  std::atomic<bool> callback_done{false};
+  std::atomic<mazda::ResultCode> configure_result{mazda::ResultCode::Ok};
+  std::atomic<mazda::ResultCode> start_result{mazda::ResultCode::Ok};
+  std::atomic<mazda::ResultCode> stop_result{mazda::ResultCode::Ok};
+  std::atomic<mazda::ResultCode> subscribe_result{mazda::ResultCode::Ok};
+  std::atomic<mazda::ResultCode> unsubscribe_result{mazda::ResultCode::Ok};
+};
+
 void record_front_wiper(void *context,
                         const mazda::Notification<mazda::FrontWiperPosition> &notice) noexcept {
   auto &recorder = *static_cast<FrontWiperRecorder *>(context);
@@ -355,6 +366,23 @@ void record_front_wiper(void *context,
   if (recorder.count < recorder.notices.size())
     recorder.notices[recorder.count++] = notice;
   recorder.changed.notify_all();
+}
+
+void reject_lifecycle_mutations(void *context,
+                                const mazda::Notification<mazda::TurnState> &) noexcept {
+  auto &recorder = *static_cast<LifecycleMutationRecorder *>(context);
+  auto invalid = mazda::TelemetryConfig{};
+  invalid.max_frames_per_batch = 0;
+  recorder.configure_result.store(recorder.service->configure(invalid).status,
+                                  std::memory_order_release);
+  recorder.start_result.store(recorder.service->start().status, std::memory_order_release);
+  recorder.stop_result.store(recorder.service->stop().status, std::memory_order_release);
+  recorder.subscribe_result.store(
+      recorder.service->subscribe_turn(&reject_lifecycle_mutations, context).status,
+      std::memory_order_release);
+  recorder.unsubscribe_result.store(recorder.service->unsubscribe(recorder.subscription).status,
+                                    std::memory_order_release);
+  recorder.callback_done.store(true, std::memory_order_release);
 }
 
 void record_turn(void *context, const mazda::Notification<mazda::TurnState> &notice) noexcept {
@@ -480,6 +508,122 @@ void test_lifecycle_and_subscription_state() {
   EXPECT(service.stop().ok());
   EXPECT(service.unsubscribe(subscription).ok());
   EXPECT(service.unsubscribe(second_subscription).ok());
+}
+
+void test_lifecycle_state_precedes_configuration_validation() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  auto invalid = config;
+  invalid.max_frames_per_batch = 0;
+  EXPECT(service.start().ok());
+  // A running service reports its lifecycle violation first, even when the
+  // supplied configuration is also malformed. This avoids leaking validation
+  // details through a state-incompatible mutation.
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidState);
+  EXPECT(service.stop().ok());
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+}
+
+void test_callback_mutations_are_rejected_before_side_effects() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  LifecycleMutationRecorder recorder{&service};
+  recorder.subscription = service.subscribe_turn(&reject_lifecycle_mutations, &recorder);
+  EXPECT(recorder.subscription.ok());
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_flag(
+      [&recorder] { return recorder.callback_done.load(std::memory_order_acquire); }));
+
+  EXPECT(recorder.configure_result.load(std::memory_order_acquire) ==
+         mazda::ResultCode::InvalidState);
+  EXPECT(recorder.start_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(recorder.stop_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(recorder.subscribe_result.load(std::memory_order_acquire) ==
+         mazda::ResultCode::InvalidState);
+  EXPECT(recorder.unsubscribe_result.load(std::memory_order_acquire) ==
+         mazda::ResultCode::InvalidState);
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Running);
+
+  // The callback rejected every mutation before touching lifecycle/source
+  // state, so the owner can still observe a live source and stop normally.
+  clock.set(1);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 1, {0x09, 0x5b, 0, 0, 0, 0, 0, 0})) ==
+         mazda::ResultCode::Ok);
+  EXPECT(wait_for_reading(service));
+  EXPECT(service.stop().ok());
+  EXPECT(service.unsubscribe(recorder.subscription).ok());
+}
+
+void test_non_owner_lifecycle_mutation_is_rejected_without_source_side_effect() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  TurnRecorder recorder{};
+  const auto subscription = service.subscribe_turn(&record_turn, &recorder);
+  EXPECT(subscription.ok());
+
+  // Registration above establishes the owner even while stopped. Setup
+  // mutations from a different host thread are rejected before configuration
+  // or registration can change.
+  std::atomic<mazda::ResultCode> pre_start_result{mazda::ResultCode::Ok};
+  std::thread non_owner_setup([&service, &config, &pre_start_result] {
+    pre_start_result.store(service.configure(config).status, std::memory_order_release);
+  });
+  non_owner_setup.join();
+  EXPECT(pre_start_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(service.start().ok());
+
+  std::atomic<mazda::ResultCode> configure_result{mazda::ResultCode::Ok};
+  std::atomic<mazda::ResultCode> subscribe_result{mazda::ResultCode::Ok};
+  std::atomic<mazda::ResultCode> unsubscribe_result{mazda::ResultCode::Ok};
+  std::atomic<mazda::ResultCode> stop_result{mazda::ResultCode::Ok};
+  std::thread non_owner([&] {
+    auto invalid = config;
+    invalid.max_frames_per_batch = 0;
+    configure_result.store(service.configure(invalid).status, std::memory_order_release);
+    subscribe_result.store(service.subscribe_turn(&record_turn, &recorder).status,
+                           std::memory_order_release);
+    unsubscribe_result.store(service
+                                 .unsubscribe({mazda::ResultCode::Ok, subscription.channel,
+                                               subscription.slot, subscription.generation})
+                                 .status,
+                             std::memory_order_release);
+    stop_result.store(service.stop().status, std::memory_order_release);
+  });
+  non_owner.join();
+  EXPECT(configure_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(subscribe_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(unsubscribe_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(stop_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(service.diagnostics().lifecycle == mazda::LifecycleState::Running);
+
+  clock.set(2);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 2, {0x09, 0x5b, 0, 0, 0, 0, 0, 0})) ==
+         mazda::ResultCode::Ok);
+  EXPECT(wait_for_reading(service));
+  EXPECT(service.stop().ok());
+
+  std::atomic<mazda::ResultCode> restart_result{mazda::ResultCode::Ok};
+  std::thread non_owner_restart([&service, &restart_result] {
+    restart_result.store(service.start().status, std::memory_order_release);
+  });
+  non_owner_restart.join();
+  EXPECT(restart_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(service.start().ok());
+  EXPECT(service.stop().ok());
+  EXPECT(service.unsubscribe(subscription).ok());
 }
 
 void test_added_poll_and_notify_signals_use_service_workers() {
@@ -1227,6 +1371,9 @@ void test_public_facade_lifecycle_contract() {
 
 int main() {
   test_lifecycle_and_subscription_state();
+  test_lifecycle_state_precedes_configuration_validation();
+  test_callback_mutations_are_rejected_before_side_effects();
+  test_non_owner_lifecycle_mutation_is_rejected_without_source_side_effect();
   test_added_poll_and_notify_signals_use_service_workers();
   test_notifications_preserve_metadata_confidence();
   test_lighting_sink_binding_is_stopped_only();

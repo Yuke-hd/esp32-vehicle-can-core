@@ -89,6 +89,16 @@ struct TelemetryConfig {
   Microseconds availability_service_target_us{kDefaultAvailabilityServiceTargetUs};
 };
 
+// A facade has one lifecycle owner: the host thread or ESP-IDF task that
+// performs its first lifecycle mutation (configure, subscription, sink
+// binding, start, or stop). That context owns later lifecycle mutations across
+// stop/start cycles. Typed callbacks are value-only and must not call
+// configure(), start(), stop(), or subscription methods. Their context remains
+// borrowed until a successful stop() returns; a timeout or other stop failure
+// leaves callbacks potentially active and requires a retry before context
+// storage or the facade is released. Polling and diagnostics may be called
+// from any context.
+
 enum class LifecycleState : std::uint8_t { Stopped, Running, Stopping, Faulted };
 
 struct AcquisitionMetrics {
