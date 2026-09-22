@@ -58,26 +58,34 @@ public:
     if (!valid_config(config))
       return {ResultCode::InvalidConfiguration};
     std::lock_guard<std::mutex> lifecycle_lock{lifecycle_mutex_};
-    if (lifecycle_.load(std::memory_order_acquire) != LifecycleState::Stopped)
+    if (lifecycle_operation_active_ ||
+        lifecycle_.load(std::memory_order_acquire) != LifecycleState::Stopped)
       return {ResultCode::InvalidState};
     config_ = config;
     return {ResultCode::Ok};
   }
 
   [[nodiscard]] StatusResult start() noexcept {
-    std::lock_guard<std::mutex> lifecycle_lock{lifecycle_mutex_};
+    std::unique_lock<std::mutex> lifecycle_lock{lifecycle_mutex_};
     if (!valid_config(config_))
       return {ResultCode::InvalidConfiguration};
 
     const auto state = lifecycle_.load(std::memory_order_acquire);
+    if (lifecycle_operation_active_)
+      return {ResultCode::Stopping};
     if (state != LifecycleState::Stopped)
       return {lifecycle_result(state)};
+    lifecycle_operation_active_ = true;
+    lifecycle_lock.unlock();
 
     processor_->reset();
     const auto source_result = source_->start();
     if (!source_result.ok()) {
       if (!start_failure_may_own_source(source_result.status)) {
         update_after_start_failure(source_result.status);
+        lifecycle_lock.lock();
+        lifecycle_operation_active_ = false;
+        lifecycle_lock.unlock();
         return source_result;
       }
 
@@ -96,6 +104,9 @@ public:
         lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
         set_lifecycle_diagnostic(LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted);
       }
+      lifecycle_lock.lock();
+      lifecycle_operation_active_ = false;
+      lifecycle_lock.unlock();
       return source_result;
     }
     source_started_ = true;
@@ -105,12 +116,13 @@ public:
 
     stop_requested_.store(false, std::memory_order_release);
     worker_active_.store(true, std::memory_order_release);
+    const auto acquisition_statistics = source_->statistics();
     {
       std::lock_guard<std::mutex> diagnostics_lock{diagnostics_mutex_};
       diagnostics_ = TransportDiagnostics{};
       diagnostics_.lifecycle = LifecycleState::Running;
       diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
-      diagnostics_.acquisition = source_->statistics();
+      diagnostics_.acquisition = acquisition_statistics;
     }
     lifecycle_.store(LifecycleState::Running, std::memory_order_release);
 
@@ -123,6 +135,9 @@ public:
       (void)stop_source_once();
       lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
       set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+      lifecycle_lock.lock();
+      lifecycle_operation_active_ = false;
+      lifecycle_lock.unlock();
       return {ResultCode::Faulted};
     }
 #else
@@ -134,9 +149,15 @@ public:
       (void)stop_source_once();
       lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
       set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+      lifecycle_lock.lock();
+      lifecycle_operation_active_ = false;
+      lifecycle_lock.unlock();
       return {ResultCode::Faulted};
     }
 #endif
+    lifecycle_lock.lock();
+    lifecycle_operation_active_ = false;
+    lifecycle_lock.unlock();
     return {ResultCode::Ok};
   }
 
@@ -149,36 +170,53 @@ public:
       return {ResultCode::InvalidState};
 #endif
 
-    std::lock_guard<std::mutex> lifecycle_lock{lifecycle_mutex_};
+    std::unique_lock<std::mutex> lifecycle_lock{lifecycle_mutex_};
     const auto state = lifecycle_.load(std::memory_order_acquire);
+    if (lifecycle_operation_active_)
+      return {ResultCode::Stopping};
     if (state == LifecycleState::Stopped && !source_started_)
       return {ResultCode::NotRunning};
 
     if (source_ownership_ == SourceOwnership::PartialStart) {
+      lifecycle_operation_active_ = true;
       lifecycle_.store(LifecycleState::Stopping, std::memory_order_release);
+      lifecycle_lock.unlock();
       set_lifecycle_diagnostic(LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped);
       const auto cleanup_result = attempt_partial_start_cleanup();
       if (cleanup_result.ok()) {
         lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
         set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+        lifecycle_lock.lock();
+        lifecycle_operation_active_ = false;
+        lifecycle_lock.unlock();
         return {ResultCode::Ok};
       }
       lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
       set_lifecycle_diagnostic(LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted);
+      lifecycle_lock.lock();
+      lifecycle_operation_active_ = false;
+      lifecycle_lock.unlock();
       if (cleanup_result.status == ResultCode::Timeout ||
           cleanup_result.status == ResultCode::Stopping)
         return {ResultCode::Timeout};
       return {ResultCode::Faulted};
     }
 
+    lifecycle_operation_active_ = true;
     if (state != LifecycleState::Stopping)
       lifecycle_.store(LifecycleState::Stopping, std::memory_order_release);
+    lifecycle_lock.unlock();
     set_lifecycle_diagnostic(LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped);
     stop_requested_.store(true, std::memory_order_release);
 
     const auto source_result = stop_source_once();
-    if (source_result.status == ResultCode::Timeout || source_result.status == ResultCode::Stopping)
+    if (source_result.status == ResultCode::Timeout ||
+        source_result.status == ResultCode::Stopping) {
+      lifecycle_lock.lock();
+      lifecycle_operation_active_ = false;
+      lifecycle_lock.unlock();
       return {ResultCode::Timeout};
+    }
 
 #if !defined(ESP_PLATFORM)
     if (worker_.joinable())
@@ -191,8 +229,12 @@ public:
       vTaskDelay(kWaitTicks);
       ++waited;
     }
-    if (worker_active_.load(std::memory_order_acquire))
+    if (worker_active_.load(std::memory_order_acquire)) {
+      lifecycle_lock.lock();
+      lifecycle_operation_active_ = false;
+      lifecycle_lock.unlock();
       return {ResultCode::Timeout};
+    }
 #endif
 
     worker_active_.store(false, std::memory_order_release);
@@ -201,6 +243,9 @@ public:
                                                     : vehicle_core::TransportHealth::Faulted;
     lifecycle_.store(final_state, std::memory_order_release);
     set_lifecycle_diagnostic(final_state, final_transport);
+    lifecycle_lock.lock();
+    lifecycle_operation_active_ = false;
+    lifecycle_lock.unlock();
     if (source_result.ok())
       return {ResultCode::Ok};
     return {ResultCode::Faulted};
@@ -211,8 +256,9 @@ public:
   }
 
   [[nodiscard]] TransportDiagnostics diagnostics() const noexcept {
+    const auto now = clock_->now();
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
-    update_silence_diagnostic_locked();
+    update_silence_diagnostic_locked(now);
     return diagnostics_;
   }
 
@@ -245,17 +291,17 @@ private:
 
   void set_lifecycle_diagnostic(const LifecycleState lifecycle,
                                 const vehicle_core::TransportHealth transport) noexcept {
+    const auto acquisition_statistics = source_->statistics();
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
     diagnostics_.lifecycle = lifecycle;
     diagnostics_.transport = transport;
-    diagnostics_.acquisition = source_->statistics();
+    diagnostics_.acquisition = acquisition_statistics;
   }
 
-  void update_silence_diagnostic_locked() const noexcept {
+  void update_silence_diagnostic_locked(const vehicle_core::MonotonicTimestamp now) const noexcept {
     if (lifecycle_.load(std::memory_order_acquire) != LifecycleState::Running ||
         !diagnostics_.has_last_frame)
       return;
-    const auto now = clock_->now();
     if (now >= diagnostics_.last_frame_us &&
         now - diagnostics_.last_frame_us >= config_.transport_silence_timeout_us)
       diagnostics_.transport = vehicle_core::TransportHealth::TimedOut;
@@ -317,8 +363,10 @@ private:
                       const vehicle_core::MonotonicTimestamp receive_time_us,
                       const vehicle_core::RawCanFrame *frame = nullptr,
                       const ProcessResult *result = nullptr) noexcept {
+    const auto acquisition_statistics = source_->statistics();
+    const auto timeout_now = status == ReceiveStatus::Timeout ? clock_->now() : 0;
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
-    diagnostics_.acquisition = source_->statistics();
+    diagnostics_.acquisition = acquisition_statistics;
     if (status == ReceiveStatus::Frame && frame != nullptr) {
       diagnostics_.transport = vehicle_core::TransportHealth::Live;
       diagnostics_.has_last_frame = true;
@@ -346,7 +394,7 @@ private:
       }
     } else if (status == ReceiveStatus::Timeout) {
       diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
-      update_silence_diagnostic_locked();
+      update_silence_diagnostic_locked(timeout_now);
     } else if (status == ReceiveStatus::Fault || status == ReceiveStatus::NotStarted) {
       diagnostics_.lifecycle = LifecycleState::Faulted;
       diagnostics_.transport = vehicle_core::TransportHealth::Faulted;
@@ -399,6 +447,7 @@ private:
   const vehicle_core::MonotonicClock *clock_;
   mutable std::mutex lifecycle_mutex_{};
   mutable std::mutex diagnostics_mutex_{};
+  bool lifecycle_operation_active_{false};
   RuntimeConfig config_{};
   mutable TransportDiagnostics diagnostics_{};
   std::atomic<LifecycleState> lifecycle_{LifecycleState::Stopped};

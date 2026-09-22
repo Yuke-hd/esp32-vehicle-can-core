@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <future>
 #include <mutex>
 #include <thread>
 
@@ -75,6 +76,11 @@ public:
   }
 
   [[nodiscard]] vehicle_telemetry::AcquisitionStatistics statistics() const noexcept override {
+    if (statistics_blocked_.load(std::memory_order_acquire)) {
+      statistics_entered_.store(true, std::memory_order_release);
+      while (statistics_blocked_.load(std::memory_order_acquire))
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
     std::lock_guard<std::mutex> lock{mutex_};
     return statistics_;
   }
@@ -115,6 +121,14 @@ public:
     start_failure_owns_source_ = owns_source;
   }
 
+  void set_statistics_blocked(const bool blocked) noexcept {
+    statistics_blocked_.store(blocked, std::memory_order_release);
+  }
+
+  [[nodiscard]] bool statistics_entered() const noexcept {
+    return statistics_entered_.load(std::memory_order_acquire);
+  }
+
 private:
   const std::size_t capacity_;
   mutable std::mutex mutex_{};
@@ -128,6 +142,8 @@ private:
   bool started_{false};
   bool stop_requested_{false};
   bool faulted_{false};
+  mutable std::atomic<bool> statistics_blocked_{false};
+  mutable std::atomic<bool> statistics_entered_{false};
 };
 
 class CountingProcessor final : public vehicle_telemetry::FrameProcessor {
@@ -368,6 +384,30 @@ TEST_CASE("generic runtime reports injected-clock transport silence") {
   CHECK(runtime.diagnostics().transport == vehicle_core::TransportHealth::Live);
   clock.set(1'100);
   CHECK(runtime.diagnostics().transport == vehicle_core::TransportHealth::TimedOut);
+  CHECK(runtime.stop().ok());
+}
+
+TEST_CASE("generic runtime diagnostics remains observable while source statistics blocks") {
+  FakeSource source;
+  CountingProcessor processor;
+  RecordingObserver observer;
+  vehicle_telemetry::Runtime runtime{source, processor, observer};
+
+  REQUIRE(runtime.configure({2, 100'000}).ok());
+  REQUIRE(runtime.start().ok());
+  source.set_statistics_blocked(true);
+  source.fail();
+  for (int attempt = 0; attempt < 2'000 && !source.statistics_entered(); ++attempt)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  REQUIRE(source.statistics_entered());
+
+  auto diagnostics_read =
+      std::async(std::launch::async, [&runtime] { return runtime.diagnostics(); });
+  REQUIRE(diagnostics_read.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready);
+  CHECK(diagnostics_read.get().lifecycle == vehicle_telemetry::LifecycleState::Running);
+
+  source.set_statistics_blocked(false);
+  REQUIRE(observer.wait_for_lifecycle(vehicle_telemetry::LifecycleState::Faulted));
   CHECK(runtime.stop().ok());
 }
 
