@@ -13,6 +13,22 @@ namespace mazda {
 
 // Application-facing background telemetry facade. Task, driver, decoder, and
 // dispatcher ownership remains private to the implementation.
+//
+// Lifecycle ownership is deliberately single-context: the host thread or
+// ESP-IDF task that first mutates a facade (configure, subscription, sink
+// binding, start, or stop) becomes its owner. That owner performs all later
+// lifecycle mutations, including mutations after a successful stop and
+// restart. Polling and diagnostics are safe from any context.
+//
+// Callbacks receive value-only notification copies. Their context pointer and
+// any pointed-to storage must remain valid until stop() returns successfully;
+// callback execution can still be in progress while stop() reports Timeout.
+// A callback must not call lifecycle-mutating methods on this facade; those
+// calls are rejected before state or source changes. A successful stop returns
+// only after callbacks and worker tasks are quiescent. If stop() times out or
+// fails, keep the facade and callback context alive and retry stop() from the
+// lifecycle owner. Destruction requires a successfully stopped, quiescent
+// facade.
 class VehicleTelemetry final {
 public:
   VehicleTelemetry() noexcept;

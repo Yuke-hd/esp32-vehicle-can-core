@@ -25,6 +25,10 @@ namespace {
 constexpr std::uint64_t kNanosecondsPerMicrosecond = 1'000;
 constexpr vehicle_core::Microseconds kLightingHeartbeatUs = 100'000;
 constexpr std::uint16_t kInvalidChannel = 0xffffU;
+// This counter is deliberately never reset while the process is alive. The
+// value is stored in each execution context's TLS, so a recycled TLS address
+// or FreeRTOS task handle cannot recreate an earlier lifecycle identity.
+std::atomic<std::uint64_t> g_next_execution_identity{1};
 #if defined(ESP_PLATFORM)
 // Keep task polling cooperative even when the configured tick rate truncates
 // a one-millisecond delay to zero ticks.
@@ -325,6 +329,26 @@ VehicleTelemetryService::VehicleTelemetryService() noexcept
   processing_state_.apply_freshness_policy(config_.freshness);
 }
 
+VehicleTelemetryService::ExecutionIdentity
+VehicleTelemetryService::current_execution_identity() noexcept {
+  // A monotonically assigned value is stable for this execution context but
+  // remains unique after its TLS storage or FreeRTOS task handle is recycled.
+  // The counter is bounded by uint64_t and this path performs no allocation.
+  static thread_local const ExecutionIdentity execution_identity =
+      g_next_execution_identity.fetch_add(1, std::memory_order_relaxed);
+  return execution_identity;
+}
+
+bool VehicleTelemetryService::callback_mutation_rejected() const noexcept {
+  return callback_context_identity_.load(std::memory_order_acquire) == current_execution_identity();
+}
+
+bool VehicleTelemetryService::claim_or_validate_lifecycle_owner() noexcept {
+  if (lifecycle_owner_identity_ == kNoExecutionIdentity)
+    lifecycle_owner_identity_ = current_execution_identity();
+  return lifecycle_owner_identity_ == current_execution_identity();
+}
+
 VehicleTelemetryService::~VehicleTelemetryService() noexcept {
   if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped) {
     (void)stop();
@@ -427,11 +451,15 @@ ResultCode VehicleTelemetryService::map_notification_status(
 }
 
 StatusResult VehicleTelemetryService::configure(const TelemetryConfig &config) noexcept {
-  if (!valid_config(config))
-    return {ResultCode::InvalidConfiguration};
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState};
   std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (!claim_or_validate_lifecycle_owner())
+    return {ResultCode::InvalidState};
   if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
     return {ResultCode::InvalidState};
+  if (!valid_config(config))
+    return {ResultCode::InvalidConfiguration};
   const auto result = publication_.configure(config);
   if (result.ok())
     config_ = config;
@@ -439,7 +467,11 @@ StatusResult VehicleTelemetryService::configure(const TelemetryConfig &config) n
 }
 
 StatusResult VehicleTelemetryService::bind_lighting_sink(LightingSink &lighting_sink) noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState};
   std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (!claim_or_validate_lifecycle_owner())
+    return {ResultCode::InvalidState};
   if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
     return {ResultCode::InvalidState};
   lighting_sink_ = &lighting_sink;
@@ -488,7 +520,11 @@ std::size_t VehicleTelemetryService::dispatch_channels_once() noexcept {
 }
 
 StatusResult VehicleTelemetryService::start() noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState};
   std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (!claim_or_validate_lifecycle_owner())
+    return {ResultCode::InvalidState};
   const auto current = lifecycle_state_.load(std::memory_order_acquire);
   if (current == LifecycleState::Running)
     return {ResultCode::AlreadyRunning};
@@ -654,9 +690,13 @@ StatusResult VehicleTelemetryService::start() noexcept {
 }
 
 StatusResult VehicleTelemetryService::stop() noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState};
   bool was_faulted = false;
   {
     std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+    if (!claim_or_validate_lifecycle_owner())
+      return {ResultCode::InvalidState};
     const auto current = lifecycle_state_.load(std::memory_order_acquire);
     if (current == LifecycleState::Stopped)
       return {ResultCode::NotRunning};
@@ -773,7 +813,14 @@ void VehicleTelemetryService::processing_loop() noexcept {
 
 void VehicleTelemetryService::dispatcher_loop() noexcept {
   while (run_requested_.load(std::memory_order_acquire)) {
-    if (dispatch_channels_once() == 0) {
+    // NotificationChannel releases its internal lock before invoking the
+    // callback. Keep a service-level execution marker around that bounded
+    // dispatch so facade mutations made directly by the callback can reject
+    // before lifecycle state or the acquisition source is touched.
+    callback_context_identity_.store(current_execution_identity(), std::memory_order_release);
+    const std::size_t delivered = dispatch_channels_once();
+    callback_context_identity_.store(kNoExecutionIdentity, std::memory_order_release);
+    if (delivered == 0) {
 #if defined(ESP_PLATFORM)
       vTaskDelay(kMinimumTaskDelayTicks);
 #else
@@ -967,7 +1014,11 @@ MAZDA_SUBSCRIBE_METHOD(subscribe_front_wiper, 15, Callback<FrontWiperPosition>)
 #undef MAZDA_SUBSCRIBE_METHOD
 
 StatusResult VehicleTelemetryService::unsubscribe(const SubscriptionToken &token) noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState};
   std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (!claim_or_validate_lifecycle_owner())
+    return {ResultCode::InvalidState};
   if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
     return {ResultCode::InvalidState};
   Registration *registration = find_registration(token);

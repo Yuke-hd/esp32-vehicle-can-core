@@ -40,10 +40,26 @@ contracts remain usable without exposing their implementation handoffs.
 The façade has two fixed subscriber slots per notification channel. Handles
 carry channel, slot, and generation internally, so a stale handle cannot
 remove a later registration. Configuration and subscription mutation are
-stopped-only operations. Runtime task and driver ownership is private to the
-background service. The Stage 3-A WeAct application uses the public facade as
-shown in [`mcan-64-firmware-integration.md`](mcan-64-firmware-integration.md);
-it does not add a manual CAN, decode, freshness, notification, or LED loop.
+stopped-only operations. The host thread or ESP-IDF task that performs the
+first lifecycle mutation (configure, subscription, sink binding, start, or
+stop) is its lifecycle owner and must perform later lifecycle mutations,
+including stop/start cycles. Polling and diagnostics are
+context-independent. The implementation records that owner with a bounded,
+allocation-free 64-bit generation token rather than a thread-local address or
+FreeRTOS task handle, so sequential host threads and recycled ESP-IDF task
+handles cannot inherit an earlier owner's identity.
+
+Callbacks receive copied values and borrow their caller-provided context until
+`stop()` returns successfully. Callback-originated `configure`, `start`,
+`stop`, `subscribe`, and `unsubscribe` calls are rejected before lifecycle
+state or source side effects. A successful stop establishes callback and
+worker quiescence; a timeout or other failure leaves the facade and callback
+context live so the lifecycle owner can retry. Do not destroy the facade or
+release callback context until that retry succeeds. Runtime task and driver
+ownership is private to the background service. The Stage 3-A WeAct
+application uses the public facade as shown in
+[`mcan-64-firmware-integration.md`](mcan-64-firmware-integration.md); it does
+not add a manual CAN, decode, freshness, notification, or LED loop.
 
 ## Deterministic host seams
 

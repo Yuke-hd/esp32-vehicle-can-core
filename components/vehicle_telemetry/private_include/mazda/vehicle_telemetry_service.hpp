@@ -418,6 +418,19 @@ private:
   [[nodiscard]] static ResultCode
   map_notification_status(vehicle_core::NotificationStatus status) noexcept;
 
+  // Execution identities are process-lifetime generation tokens. A token is
+  // bounded to 64 bits, requires no allocation, and is assigned once per
+  // host thread or ESP-IDF task. Do not use a TLS address or FreeRTOS task
+  // handle directly: both may be recycled after their owner exits.
+  using ExecutionIdentity = std::uint64_t;
+  static constexpr ExecutionIdentity kNoExecutionIdentity{0};
+  [[nodiscard]] static ExecutionIdentity current_execution_identity() noexcept;
+  [[nodiscard]] bool callback_mutation_rejected() const noexcept;
+  // Must be called while lifecycle_mutex_ is held. The first lifecycle
+  // mutation establishes ownership; all later mutations must use that same
+  // host thread or ESP-IDF task.
+  [[nodiscard]] bool claim_or_validate_lifecycle_owner() noexcept;
+
   template <typename T, std::uint16_t ChannelId>
   [[nodiscard]] SubscriptionToken
   register_subscription(vehicle_core::NotificationChannel<T, ChannelId> &channel,
@@ -498,6 +511,16 @@ private:
   std::array<Registration, kSubscriptionCapacity> registrations_{};
 
   mutable std::mutex lifecycle_mutex_{};
+  // The first lifecycle mutation establishes the owner. That owner remains
+  // stable across stop/start cycles and is checked before every subsequent
+  // lifecycle mutation. Setup registration/configuration therefore has the
+  // same single-context contract as runtime start/stop.
+  ExecutionIdentity lifecycle_owner_identity_{kNoExecutionIdentity};
+  // Set only around the bounded dispatcher call that can invoke a user
+  // callback. It lets callback-originated mutations reject before acquiring
+  // lifecycle state or touching the source, including a callback that calls
+  // stop() on the owner thread.
+  std::atomic<ExecutionIdentity> callback_context_identity_{kNoExecutionIdentity};
   std::atomic<LifecycleState> lifecycle_state_{LifecycleState::Stopped};
   std::atomic<bool> run_requested_{false};
   std::atomic<bool> processing_done_{true};
@@ -549,7 +572,11 @@ template <typename T, std::uint16_t ChannelId>
 SubscriptionToken VehicleTelemetryService::subscribe_notification_descriptor(
     const NotificationDescriptor<T, ChannelId> &descriptor, Callback<T> callback,
     void *context) noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState, 0xffffU, 0xffU, 0};
   std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (!claim_or_validate_lifecycle_owner())
+    return {ResultCode::InvalidState, 0xffffU, 0xffU, 0};
   if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
     return {ResultCode::InvalidState, 0xffffU, 0xffU, 0};
   return register_subscription(this->*descriptor.channel, callback, context);
