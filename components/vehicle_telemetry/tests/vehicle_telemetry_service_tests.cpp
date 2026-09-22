@@ -1,5 +1,6 @@
 #include "mazda/vehicle_telemetry.hpp"
 
+#include "mazda/definitions.hpp"
 #include "mazda/vehicle_telemetry_internal.hpp"
 #include "mazda/vehicle_telemetry_service.hpp"
 
@@ -329,6 +330,24 @@ struct FrontWiperRecorder final {
   std::size_t count{0};
 };
 
+template <typename T> struct ValidationRecorder final {
+  mutable std::mutex mutex{};
+  mutable std::condition_variable changed{};
+  mazda::ValidationStatus validation{mazda::ValidationStatus::Reference};
+  std::size_t count{0};
+};
+
+template <typename T>
+void record_validation(void *context, const mazda::Notification<T> &notice) noexcept {
+  auto &recorder = *static_cast<ValidationRecorder<T> *>(context);
+  {
+    std::lock_guard<std::mutex> lock{recorder.mutex};
+    recorder.validation = notice.current.validation;
+    ++recorder.count;
+  }
+  recorder.changed.notify_all();
+}
+
 void record_front_wiper(void *context,
                         const mazda::Notification<mazda::FrontWiperPosition> &notice) noexcept {
   auto &recorder = *static_cast<FrontWiperRecorder *>(context);
@@ -403,6 +422,20 @@ bool wait_for_flag(Predicate predicate,
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
   return predicate();
+}
+
+template <typename T>
+bool wait_for_notification(const ValidationRecorder<T> &recorder,
+                           const std::chrono::milliseconds timeout = std::chrono::milliseconds{
+                               500}) {
+  std::unique_lock<std::mutex> lock{recorder.mutex};
+  return recorder.changed.wait_for(lock, timeout, [&recorder] { return recorder.count >= 1; });
+}
+
+template <typename T>
+mazda::ValidationStatus recorded_validation(const ValidationRecorder<T> &recorder) {
+  std::lock_guard<std::mutex> lock{recorder.mutex};
+  return recorder.validation;
 }
 
 int failures = 0;
@@ -482,6 +515,112 @@ void test_added_poll_and_notify_signals_use_service_workers() {
     EXPECT(recorder.notices[1].current.value == mazda::FrontWiperPosition::On);
     EXPECT(recorder.notices[1].current.availability == mazda::Availability::FreshnessUnverified);
   }
+  EXPECT(service.stop().ok());
+}
+
+void test_notifications_preserve_metadata_confidence() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  ValidationRecorder<mazda::SelectorPosition> selector{};
+  ValidationRecorder<mazda::ActualGear> actual_gear{};
+  ValidationRecorder<mazda::TurnState> turn{};
+  ValidationRecorder<bool> hazard{};
+  ValidationRecorder<bool> left_turn{};
+  ValidationRecorder<bool> right_turn{};
+  ValidationRecorder<bool> liftgate{};
+  ValidationRecorder<bool> rear_right_door{};
+  ValidationRecorder<bool> rear_left_door{};
+  ValidationRecorder<bool> front_left_door{};
+  ValidationRecorder<bool> front_right_door{};
+  ValidationRecorder<bool> doors_unlocked{};
+  ValidationRecorder<bool> left_lamp{};
+  ValidationRecorder<bool> right_lamp{};
+  ValidationRecorder<bool> wiper_low{};
+  ValidationRecorder<mazda::FrontWiperPosition> front_wiper{};
+
+  EXPECT(service.subscribe_selector(&record_validation<mazda::SelectorPosition>, &selector).ok());
+  EXPECT(service.subscribe_actual_gear(&record_validation<mazda::ActualGear>, &actual_gear).ok());
+  EXPECT(service.subscribe_turn(&record_validation<mazda::TurnState>, &turn).ok());
+  EXPECT(service.subscribe_hazard(&record_validation<bool>, &hazard).ok());
+  EXPECT(service.subscribe_left_turn(&record_validation<bool>, &left_turn).ok());
+  EXPECT(service.subscribe_right_turn(&record_validation<bool>, &right_turn).ok());
+  EXPECT(service.subscribe_liftgate(&record_validation<bool>, &liftgate).ok());
+  EXPECT(service.subscribe_rear_right_door(&record_validation<bool>, &rear_right_door).ok());
+  EXPECT(service.subscribe_rear_left_door(&record_validation<bool>, &rear_left_door).ok());
+  EXPECT(service.subscribe_front_left_door(&record_validation<bool>, &front_left_door).ok());
+  EXPECT(service.subscribe_front_right_door(&record_validation<bool>, &front_right_door).ok());
+  EXPECT(service.subscribe_doors_unlocked(&record_validation<bool>, &doors_unlocked).ok());
+  EXPECT(service.subscribe_left_lamp(&record_validation<bool>, &left_lamp).ok());
+  EXPECT(service.subscribe_right_lamp(&record_validation<bool>, &right_lamp).ok());
+  EXPECT(service.subscribe_wiper_low(&record_validation<bool>, &wiper_low).ok());
+  EXPECT(service.subscribe_front_wiper(&record_validation<mazda::FrontWiperPosition>, &front_wiper)
+             .ok());
+
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_notification(selector));
+  EXPECT(wait_for_notification(actual_gear));
+  EXPECT(wait_for_notification(turn));
+  EXPECT(wait_for_notification(hazard));
+  EXPECT(wait_for_notification(left_turn));
+  EXPECT(wait_for_notification(right_turn));
+  EXPECT(wait_for_notification(liftgate));
+  EXPECT(wait_for_notification(rear_right_door));
+  EXPECT(wait_for_notification(rear_left_door));
+  EXPECT(wait_for_notification(front_left_door));
+  EXPECT(wait_for_notification(front_right_door));
+  EXPECT(wait_for_notification(doors_unlocked));
+  EXPECT(wait_for_notification(left_lamp));
+  EXPECT(wait_for_notification(right_lamp));
+  EXPECT(wait_for_notification(wiper_low));
+  EXPECT(wait_for_notification(front_wiper));
+
+  // The initial notifications are NoData, proving that validation evidence is
+  // independent from runtime availability and freshness evaluation.
+  EXPECT(recorded_validation(selector) == mazda::ValidationStatus::Confirmed);
+  EXPECT(recorded_validation(selector) == mazda::candidate::kSelectorDefinition.confidence);
+  EXPECT(recorded_validation(actual_gear) == mazda::ValidationStatus::Observed);
+  EXPECT(recorded_validation(actual_gear) == mazda::candidate::kActualGearDefinition.confidence);
+  EXPECT(recorded_validation(turn) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(turn) == mazda::candidate::kTurnLeftSwitchDefinition.confidence);
+  EXPECT(recorded_validation(hazard) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(hazard) == mazda::candidate::kHazardDefinition.confidence);
+  EXPECT(recorded_validation(left_turn) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(left_turn) == mazda::candidate::kTurnLeftSwitchDefinition.confidence);
+  EXPECT(recorded_validation(right_turn) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(right_turn) ==
+         mazda::candidate::kTurnRightSwitchDefinition.confidence);
+  EXPECT(recorded_validation(liftgate) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(liftgate) == mazda::candidate::kLiftgateOpenDefinition.confidence);
+  EXPECT(recorded_validation(rear_right_door) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(rear_right_door) ==
+         mazda::candidate::kRearRightDoorOpenDefinition.confidence);
+  EXPECT(recorded_validation(rear_left_door) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(rear_left_door) ==
+         mazda::candidate::kRearLeftDoorOpenDefinition.confidence);
+  EXPECT(recorded_validation(front_left_door) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(front_left_door) ==
+         mazda::candidate::kFrontLeftDoorOpenRhdDefinition.confidence);
+  EXPECT(recorded_validation(front_right_door) == mazda::ValidationStatus::Confirmed);
+  EXPECT(recorded_validation(front_right_door) ==
+         mazda::candidate::kFrontRightDoorOpenRhdDefinition.confidence);
+  EXPECT(recorded_validation(doors_unlocked) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(doors_unlocked) ==
+         mazda::candidate::kDoorsUnlockedDefinition.confidence);
+  EXPECT(recorded_validation(left_lamp) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(left_lamp) ==
+         mazda::candidate::kLeftIndicatorLampDefinition.confidence);
+  EXPECT(recorded_validation(right_lamp) == mazda::ValidationStatus::Reference);
+  EXPECT(recorded_validation(right_lamp) ==
+         mazda::candidate::kRightIndicatorLampDefinition.confidence);
+  EXPECT(recorded_validation(wiper_low) == mazda::ValidationStatus::Observed);
+  EXPECT(recorded_validation(wiper_low) == mazda::candidate::kWiperLowDefinition.confidence);
+  EXPECT(recorded_validation(front_wiper) == mazda::ValidationStatus::Observed);
+  EXPECT(recorded_validation(front_wiper) == mazda::candidate::kFrontWiperDefinition.confidence);
   EXPECT(service.stop().ok());
 }
 
@@ -694,12 +833,23 @@ void test_sustained_bounded_overload_services_expiry_and_latest_state() {
   EXPECT(burst_statistics.frames_received > burst_statistics.frames_dropped);
 
   // Release the processing owner after the queue is known to contain frames.
-  // Its bounded batch handoff must still service expiry between finite bursts.
+  // Its bounded batch handoff must continue draining the finite backlog.
   clock.resume_reads();
   EXPECT(wait_for_flag([&service, processed_before] {
-    const auto diagnostics = service.diagnostics();
-    return diagnostics.acquisition.frames_processed > processed_before &&
-           diagnostics.transport == vehicle_core::TransportHealth::TimedOut;
+    return service.diagnostics().acquisition.frames_processed > processed_before;
+  }));
+
+  const auto accepted_burst =
+      burst_statistics.frames_received - source_received_before - burst_statistics.frames_dropped;
+  EXPECT(wait_for_flag([&service, processed_before, accepted_burst] {
+    return service.diagnostics().acquisition.frames_processed >= processed_before + accepted_burst;
+  }));
+
+  // Once the finite backlog is drained, expiry must still be serviced even
+  // though no further frames are arriving.
+  clock.set(300'101);
+  EXPECT(wait_for_flag([&service] {
+    return service.diagnostics().transport == vehicle_core::TransportHealth::TimedOut;
   }));
   EXPECT(wait_for_flag([&recorder] {
     std::lock_guard<std::mutex> lock{recorder.mutex};
@@ -708,12 +858,6 @@ void test_sustained_bounded_overload_services_expiry_and_latest_state() {
         return true;
     }
     return false;
-  }));
-
-  const auto accepted_burst =
-      burst_statistics.frames_received - source_received_before - burst_statistics.frames_dropped;
-  EXPECT(wait_for_flag([&service, processed_before, accepted_burst] {
-    return service.diagnostics().acquisition.frames_processed >= processed_before + accepted_burst;
   }));
 
   // Polling remains live after the overload. A final accepted frame becomes
@@ -732,6 +876,62 @@ void test_sustained_bounded_overload_services_expiry_and_latest_state() {
     return reading.value.has_value() && *reading.value == 120.0F;
   }));
   EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Live);
+}
+
+void test_transport_liveness_uses_acquisition_clock() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.transport_silence_timeout_us = 100;
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  EXPECT(service.start().ok());
+  const auto wait_for_processed = [&](const std::uint64_t count) {
+    return wait_for_flag(
+        [&service, count] { return service.diagnostics().acquisition.frames_processed >= count; });
+  };
+
+  // The first frame establishes both the semantic value and the receive
+  // watermark. The second frame has an equal observation timestamp but was
+  // acquired later; it must keep transport live without changing the value.
+  clock.set(100);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 100,
+                             {0x00, 0x01, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_processed(1));
+  clock.set(180);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 100,
+                             {0x00, 0x02, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_processed(2));
+  EXPECT(service.engine_rpm().value.has_value());
+  EXPECT(*service.engine_rpm().value == 0.25F);
+  clock.set(201);
+  // A frame-timestamp watermark would have timed out at 201; acquisition time
+  // 180 remains within the 100-us silence interval.
+  EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Live);
+
+  // An older observation timestamp is also transport traffic, but cannot
+  // replace the accepted semantic value.
+  clock.set(250);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 50,
+                             {0x00, 0x03, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_processed(3));
+  EXPECT(service.engine_rpm().value.has_value());
+  EXPECT(*service.engine_rpm().value == 0.25F);
+  EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Live);
+
+  // A backwards acquisition-clock step must not move the receive watermark
+  // backwards. The high source timestamp is intentionally unrelated: it must
+  // not keep transport live or make the timeout clock run backwards.
+  clock.set(500);
+  EXPECT(source.inject(frame(0x7ff, 500, {0, 0, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_processed(4));
+  clock.set(400);
+  EXPECT(source.inject(frame(0x7ff, 1'000, {0, 0, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_processed(5));
+  clock.set(601);
+  EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::TimedOut);
   EXPECT(service.stop().ok());
 }
 
@@ -1028,6 +1228,7 @@ void test_public_facade_lifecycle_contract() {
 int main() {
   test_lifecycle_and_subscription_state();
   test_added_poll_and_notify_signals_use_service_workers();
+  test_notifications_preserve_metadata_confidence();
   test_lighting_sink_binding_is_stopped_only();
   test_failed_shared_source_start_does_not_stop_existing_owner();
   test_source_start_failure_without_ownership_is_restartable();
@@ -1036,6 +1237,7 @@ int main() {
   test_immediate_worker_receive_fault_is_not_overwritten_by_running();
   test_unknown_frame_is_transport_traffic_and_expires();
   test_sustained_bounded_overload_services_expiry_and_latest_state();
+  test_transport_liveness_uses_acquisition_clock();
   test_notifications_coalesce_and_recover();
   test_blocked_callback_does_not_block_polling_and_stop_is_retryable();
   test_callback_stop_timeout_can_retry_after_source_already_stopped();
