@@ -191,6 +191,7 @@ public:
       std::lock_guard<std::mutex> lock{mutex};
       last = diagnostics;
     }
+    diagnostics_count.fetch_add(1, std::memory_order_release);
     condition.notify_all();
   }
 
@@ -213,12 +214,20 @@ public:
                               [this, expected] { return last.lifecycle == expected; });
   }
 
+  bool wait_for_diagnostics_count(const std::uint32_t expected) {
+    std::unique_lock<std::mutex> lock{mutex};
+    return condition.wait_for(lock, std::chrono::seconds(2), [this, expected] {
+      return diagnostics_count.load(std::memory_order_acquire) >= expected;
+    });
+  }
+
   [[nodiscard]] vehicle_telemetry::TransportDiagnostics diagnostics() const {
     std::lock_guard<std::mutex> lock{mutex};
     return last;
   }
 
   std::atomic<std::uint32_t> frames_processed{0};
+  std::atomic<std::uint32_t> diagnostics_count{0};
 
 private:
   mutable std::mutex mutex{};
@@ -384,6 +393,35 @@ TEST_CASE("generic runtime reports injected-clock transport silence") {
   CHECK(runtime.diagnostics().transport == vehicle_core::TransportHealth::Live);
   clock.set(1'100);
   CHECK(runtime.diagnostics().transport == vehicle_core::TransportHealth::TimedOut);
+  CHECK(runtime.stop().ok());
+}
+
+TEST_CASE("generic runtime preserves live state during timeout polling") {
+  FakeSource source;
+  CountingProcessor processor;
+  RecordingObserver observer;
+  ManualClock clock;
+  vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
+
+  REQUIRE(runtime.configure({1, 100}).ok());
+  REQUIRE(runtime.start().ok());
+  clock.set(1'000);
+  REQUIRE(source.inject(frame(0x456)));
+  REQUIRE(observer.wait_for_frame(1));
+  REQUIRE(observer.wait_for_diagnostics_count(1));
+
+  const auto after_frame = observer.diagnostics_count.load(std::memory_order_acquire);
+  clock.set(999);
+  REQUIRE(observer.wait_for_diagnostics_count(after_frame + 1));
+  CHECK(observer.diagnostics().transport == vehicle_core::TransportHealth::Live);
+
+  clock.set(1'099);
+  REQUIRE(observer.wait_for_diagnostics_count(after_frame + 2));
+  CHECK(observer.diagnostics().transport == vehicle_core::TransportHealth::Live);
+
+  clock.set(1'100);
+  REQUIRE(observer.wait_for_transport(vehicle_core::TransportHealth::TimedOut));
+  CHECK(observer.diagnostics().transport == vehicle_core::TransportHealth::TimedOut);
   CHECK(runtime.stop().ok());
 }
 

@@ -393,8 +393,16 @@ private:
         }
       }
     } else if (status == ReceiveStatus::Timeout) {
-      diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
-      update_silence_diagnostic_locked(timeout_now);
+      // AwaitingTraffic is only the pre-traffic state. Once a frame has been
+      // observed, receive polling must preserve Live until the injected clock
+      // reaches the inclusive silence boundary. A backwards clock sample is
+      // likewise harmless because update_silence_diagnostic_locked() only
+      // evaluates elapsed time for non-decreasing samples.
+      if (!diagnostics_.has_last_frame) {
+        diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
+      } else {
+        update_silence_diagnostic_locked(timeout_now);
+      }
     } else if (status == ReceiveStatus::Fault || status == ReceiveStatus::NotStarted) {
       diagnostics_.lifecycle = LifecycleState::Faulted;
       diagnostics_.transport = vehicle_core::TransportHealth::Faulted;
