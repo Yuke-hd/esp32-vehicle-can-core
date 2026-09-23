@@ -35,11 +35,11 @@ jobs:
           cmake --version
           ninja --version
       - name: Configure host tests
-        run: cmake -S . -B "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+        run: cmake -S . -B "$RUNNER_TEMP/vehicle-can-core-host-${{ matrix.cmake }}" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
       - name: Build host tests
-        run: cmake --build "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" --parallel
+        run: cmake --build "$RUNNER_TEMP/vehicle-can-core-host-${{ matrix.cmake }}" --parallel
       - name: Run host tests
-        run: ctest --test-dir "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" --output-on-failure
+        run: ctest --test-dir "$RUNNER_TEMP/vehicle-can-core-host-${{ matrix.cmake }}" --output-on-failure
   host:
     runs-on: ubuntu-22.04
     env:
@@ -50,7 +50,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/ccache-host
-          key: ${{ runner.os }}-host-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'CMakeLists.txt', 'components/**', 'lib/**', 'tests/**', 'tools/**') }}
+          key: ${{ runner.os }}-host-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'CMakeLists.txt', 'components/**', 'tests/**', 'tools/**') }}
           restore-keys: |
             ${{ runner.os }}-host-ccache-v1-
       - name: Install host tools
@@ -64,7 +64,7 @@ jobs:
       - name: Validate C++ formatting
         shell: bash
         run: |
-          mapfile -t sources < <(find lib components firmware tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
+          mapfile -t sources < <(find components firmware tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
           test "${#sources[@]}" -gt 0
           clang-format-14 --dry-run --Werror "${sources[@]}"
       - name: Configure host tests
@@ -93,16 +93,15 @@ jobs:
           CC: clang-14
           CXX: clang++-14
         run: |
-          cmake -S . -B "$RUNNER_TEMP/mazda-host-sanitizers" -G Ninja \
+          cmake -S . -B "$RUNNER_TEMP/vehicle-can-core-host-sanitizers" -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON \
-            -DMAZDA_BUILD_HOST_TESTS=ON \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-      - name: Build portable and service tests with sanitizers
-        run: cmake --build "$RUNNER_TEMP/mazda-host-sanitizers" --parallel
-      - name: Run portable and service tests with sanitizers
-        run: ctest --test-dir "$RUNNER_TEMP/mazda-host-sanitizers" --output-on-failure
+      - name: Build portable core tests with sanitizers
+        run: cmake --build "$RUNNER_TEMP/vehicle-can-core-host-sanitizers" --parallel
+      - name: Run portable core tests with sanitizers
+        run: ctest --test-dir "$RUNNER_TEMP/vehicle-can-core-host-sanitizers" --output-on-failure
   firmware:
     runs-on: ubuntu-22.04
     env:
@@ -113,7 +112,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/ccache-firmware
-          key: ${{ runner.os }}-firmware-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'firmware/**', 'components/**', 'lib/**', 'tools/check_toolchain.py') }}
+          key: ${{ runner.os }}-firmware-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'firmware/**', 'components/**', 'tools/check_toolchain.py') }}
           restore-keys: |
             ${{ runner.os }}-firmware-ccache-v1-
       - name: Check and build with ESP-IDF v5.5.4
@@ -124,4 +123,4 @@ jobs:
             -e CCACHE_BASEDIR=/project \
             -e IDF_CCACHE_ENABLE=1 \
             espressif/idf:v5.5.4 \
-            bash -lc 'source /opt/esp/idf/export.sh >/dev/null && python3 tools/check_toolchain.py --scope firmware && cd firmware/weact-can485-v1.1 && idf.py set-target esp32 && idf.py build && cd ../tcan485-bench-ack-only && idf.py set-target esp32 && idf.py build && chmod -R a+rwX /project/.cache/ccache-firmware'
+            bash -lc 'source /opt/esp/idf/export.sh >/dev/null && python3 tools/check_toolchain.py --scope firmware && cd firmware/tcan485-bench-ack-only && idf.py set-target esp32 && idf.py build && chmod -R a+rwX /project/.cache/ccache-firmware'

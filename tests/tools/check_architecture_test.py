@@ -18,29 +18,24 @@ import check_architecture  # noqa: E402
 
 
 class ArchitectureCheckerRegressionTests(unittest.TestCase):
-    def test_vehicle_core_target_private_mazda_dependency_is_rejected(self) -> None:
+    def test_vehicle_core_target_transport_dependency_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-core-fixture-") as directory:
             root = Path(directory)
             shutil.copytree(
-                REPOSITORY_ROOT / "lib/vehicle_core",
-                root / "lib/vehicle_core",
+                REPOSITORY_ROOT / "components/vehicle_core",
+                root / "components/vehicle_core",
             )
-            shutil.copytree(
-                REPOSITORY_ROOT / "lib/mazda/include",
-                root / "lib/mazda/include",
-            )
-
-            source = root / "lib/vehicle_core/src/vehicle_core.cpp"
+            source = root / "components/vehicle_core/src/vehicle_core.cpp"
             source.write_text(
-                '#include "mazda/definitions.hpp"\n' + source.read_text(encoding="utf-8"),
+                '#include "vehicle_core/vehicle_core.hpp"\n' + source.read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-            cmake = root / "lib/vehicle_core/CMakeLists.txt"
+            cmake = root / "components/vehicle_core/CMakeLists.txt"
             cmake.write_text(
                 cmake.read_text(encoding="utf-8")
                 + "\n"
                 "target_include_directories(vehicle_core PRIVATE\n"
-                "  ${CMAKE_CURRENT_SOURCE_DIR}/../mazda/include\n"
+                "  ${CMAKE_CURRENT_SOURCE_DIR}/../../components/can_bus/include\n"
                 ")\n",
                 encoding="utf-8",
             )
@@ -58,7 +53,7 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
 
             detail = str(raised.exception)
             self.assertIn("vehicle_core target", detail)
-            self.assertIn("lib/mazda", detail)
+            self.assertIn("components/", detail)
 
     def test_active_cmake_and_yaml_build_files_reject_retired_capture_marker(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-capture-fixture-") as directory:

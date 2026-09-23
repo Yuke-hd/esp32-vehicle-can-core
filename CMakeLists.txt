@@ -2,7 +2,7 @@
 # CMake releases (including CMake 4.x) on the policies this project tested.
 cmake_minimum_required(VERSION 3.20...4.4)
 
-project(mazda_can_telemetry_host LANGUAGES CXX)
+project(esp32_vehicle_can_core_host LANGUAGES CXX)
 
 include(CTest)
 
@@ -10,19 +10,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(MAZDA_BUILD_HOST_TESTS "Build portable vehicle_core host tests" ${BUILD_TESTING})
+option(VEHICLE_CAN_CORE_BUILD_HOST_TESTS "Build portable vehicle CAN core host tests" ${BUILD_TESTING})
+option(VEHICLE_CORE_BUILD_TESTS "Build the vehicle_core notification tests"
+       ${VEHICLE_CAN_CORE_BUILD_HOST_TESTS})
 
-add_subdirectory(lib/vehicle_core)
-add_subdirectory(lib/mazda)
-add_subdirectory(lib/vehicle_lighting_policy)
-add_subdirectory(components/local_argb_sink_contract)
-add_subdirectory(components/local_argb)
-add_subdirectory(components/local_argb_compat)
+add_subdirectory(components/vehicle_core)
 add_subdirectory(components/vehicle_telemetry)
-add_subdirectory(components/vehicle_telemetry_consumer)
 
-if(MAZDA_BUILD_HOST_TESTS)
+if(VEHICLE_CAN_CORE_BUILD_HOST_TESTS)
   enable_testing()
-  add_subdirectory(tests/support)
   add_subdirectory(tests/host)
 endif()

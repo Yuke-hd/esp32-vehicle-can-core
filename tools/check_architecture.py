@@ -2,13 +2,9 @@
 """Run project-owned architecture contracts once per host suite.
 
 This host-only gate owns repository-wide checks that cannot live in one
-production target: the portable core must build without Mazda or RTOS inputs,
-vehicle and isolated-bench bindings must compile and exercise their
-project-owned mode contracts, and retired capture code must stay absent. The
-existing source-safety validators are run here rather than duplicated in
-CTest and firmware CI. Public-header positive/negative checks remain the
-separate ``public_header_boundary`` and ``public_header_checker_regression``
-gates from Stage 1.5.
+production target: the portable core must build without controller or RTOS inputs,
+the isolated-bench binding must compile and exercise its project-owned mode
+contract, and retired capture code must stay absent.
 """
 
 from __future__ import annotations
@@ -82,7 +78,7 @@ def _write_core_probe(probe_dir: Path, root: Path) -> Path:
         "set(CMAKE_CXX_EXTENSIONS OFF)\n"
         "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n"
         "set(BUILD_TESTING OFF CACHE BOOL \"\" FORCE)\n"
-        "add_subdirectory(" + _quoted(root / "lib/vehicle_core") + " vehicle_core)\n"
+        "add_subdirectory(" + _quoted(root / "components/vehicle_core") + " vehicle_core)\n"
         "add_executable(core_only_consumer " + _quoted(source) + ")\n"
         "target_link_libraries(core_only_consumer PRIVATE vehicle_core)\n"
         "target_compile_features(core_only_consumer PRIVATE cxx_std_17)\n",
@@ -146,7 +142,7 @@ def _core_dependency_violations(
         return [f"core-only compile database is unreadable: {error}"]
     root = root.resolve()
     consumer_source = consumer_source.resolve()
-    target_source_root = (root / "lib/vehicle_core/src").resolve()
+    target_source_root = (root / "components/vehicle_core/src").resolve()
     matching: List[Tuple[object, Path]] = []
     for entry in entries:
         source = _compile_database_source(entry)
@@ -170,14 +166,21 @@ def _core_dependency_violations(
 
     violations: List[str] = []
     forbidden_parts = (
-        "lib/mazda",
-        "components/",
         "freertos",
         "esp-idf",
         "esp/",
         "driver/twai",
         "sdkconfig",
     )
+    def is_forbidden(token: str) -> bool:
+        normalized = token.replace("\\", "/").lower()
+        # The component's own include/source paths are expected. Other
+        # components would invert the portable-core dependency boundary.
+        component_parts = normalized.split("components/")[1:]
+        if any(part and part.split("/", 1)[0] != "vehicle_core" for part in component_parts):
+            return True
+        return any(part in normalized for part in forbidden_parts)
+
     for index, (entry, source) in enumerate(matching):
         directory = entry.get("directory") if isinstance(entry, dict) else None
         cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
@@ -188,12 +191,9 @@ def _core_dependency_violations(
             else f"vehicle_core target ({source.relative_to(root).as_posix()})"
         )
         for token in tokens:
-            normalized = token.replace("\\", "/").lower()
-            if any(part in normalized for part in forbidden_parts):
+            if is_forbidden(token):
                 violations.append(f"forbidden {label} compile dependency: {token}")
         command_text = " ".join(tokens).replace("\\", "/").lower()
-        if "/lib/mazda/" in command_text or "lib/mazda/" in command_text:
-            violations.append(f"{label} compile command mentions Mazda")
         depfile = work_dir / f"core_dependency_{index}.d"
         dependency_probe = _run(
             [*tokens, "-MMD", "-MF", str(depfile), "-MT", str(source)],
@@ -210,8 +210,7 @@ def _core_dependency_violations(
             violations.append(f"{label} dependency probe produced no dependency data")
             continue
         for dependency in dependencies:
-            normalized = dependency.as_posix().lower()
-            if any(part in normalized for part in forbidden_parts):
+            if is_forbidden(dependency.as_posix()):
                 violations.append(f"forbidden {label} dependency: {dependency}")
     return list(dict.fromkeys(violations))
 
@@ -239,7 +238,7 @@ def _check_core_only(root: Path, cmake: str, compiler: Sequence[str], work_dir: 
     )
     if violations:
         raise ArchitectureFailure("\n".join(violations))
-    print("OK   vehicle_core builds and links without Mazda/RTOS dependencies")
+    print("OK   vehicle_core builds and links without controller/RTOS dependencies")
 
 
 def _check_adapter(
@@ -264,13 +263,6 @@ def _check_adapter(
     if result[0] != 0:
         raise ArchitectureFailure(f"{label} adapter test failed\n" + result[1][-3000:])
     print(f"OK   {label} project-owned mode adapter compiled and passed")
-
-
-def _run_validator(root: Path, label: str, command: Sequence[str]) -> None:
-    result = _run(command, cwd=root)
-    if result[0] != 0:
-        raise ArchitectureFailure(f"{label} failed\n" + result[1][-3000:])
-    print(f"OK   {label}")
 
 
 def _check_capture_removal(root: Path) -> None:
@@ -317,59 +309,35 @@ def _check_capture_removal(root: Path) -> None:
     print("OK   retired raw_capture product has no active code/build dependency")
 
 
-def _check_validator_ownership(root: Path) -> None:
-    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    host_cmake = (root / "tests/host/CMakeLists.txt").read_text(encoding="utf-8")
-    scripts = (
-        "validate_can_receive_only.py",
-        "validate_weact_vehicle_artifacts.py",
-        "validate_local_argb_boundary.py",
-    )
-    failures: List[str] = []
-    for script in scripts:
-        if script in workflow:
-            failures.append(f"{script} is directly invoked by CI; architecture_contracts must own it")
-        if script in host_cmake:
-            failures.append(f"{script} is separately registered in host CTest")
-    if failures:
-        raise ArchitectureFailure("\n".join(failures))
-    print("OK   architecture validators have one consolidated CTest owner")
+def _check_generic_runtime_surface(root: Path) -> None:
+    """Keep the injected runtime free of controller product vocabulary."""
+    runtime_root = root / "components/vehicle_telemetry"
+    forbidden = ("mazda", "lighting", "make/model", "signal_id", "facade")
+    violations: List[str] = []
+    if runtime_root.is_dir():
+        for path in runtime_root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
+                continue
+            text = path.read_text(encoding="utf-8").lower()
+            for marker in forbidden:
+                if marker in text:
+                    violations.append(
+                        f"{path.relative_to(root)} contains controller-only runtime marker {marker}"
+                    )
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print("OK   vehicle_telemetry runtime remains make-agnostic")
 
 
 def check(root: Path, cmake: str, compiler: Sequence[str]) -> int:
     root = root.resolve()
-    with tempfile.TemporaryDirectory(prefix="mazda-architecture-") as directory:
+    with tempfile.TemporaryDirectory(prefix="vehicle-can-core-architecture-") as directory:
         work_dir = Path(directory)
         try:
             _check_core_only(root, cmake, compiler, work_dir)
-            _check_adapter(root, cmake, compiler, root / "components/vehicle_can_rx/tests", work_dir)
             _check_adapter(root, cmake, compiler, root / "components/bench_can_ack/tests", work_dir)
-            _run_validator(
-                root,
-                "CAN receive-only safety validator",
-                (
-                    sys.executable,
-                    str(root / "tools/validate_can_receive_only.py"),
-                    "--public-header",
-                    str(root / "components/can_bus/include/can_bus/can_bus.h"),
-                    "--implementation",
-                    str(root / "components/can_bus/src/can_bus.cpp"),
-                    "--vehicle-binding",
-                    str(root / "components/vehicle_can_rx/src/driver_binding.cpp"),
-                ),
-            )
-            _run_validator(
-                root,
-                "vehicle/bench artifact validator",
-                (sys.executable, str(root / "tools/validate_weact_vehicle_artifacts.py"), "--root", str(root)),
-            )
-            _run_validator(
-                root,
-                "local ARGB semantic boundary validator",
-                (sys.executable, str(root / "tools/validate_local_argb_boundary.py"), "--root", str(root)),
-            )
             _check_capture_removal(root)
-            _check_validator_ownership(root)
+            _check_generic_runtime_surface(root)
         except (ArchitectureFailure, OSError, ValueError) as error:
             print(f"ERROR: {error}", file=sys.stderr)
             return 1

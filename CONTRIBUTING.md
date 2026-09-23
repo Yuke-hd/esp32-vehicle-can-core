@@ -8,11 +8,10 @@ Every repository artifact must be written in English. This includes source code,
 
 Project-authored source, documentation, tests, and tooling are licensed under
 Apache-2.0 (`LICENSE`). Third-party material keeps its original license and
-must be recorded in `THIRD_PARTY_NOTICES.md`. In particular, opendbc is an MIT-
-licensed candidate signal source: record its exact commit, files, access date,
-and required notice before copying or generating signal definitions. Generated
-definitions inherit the applicable source attribution; they are not
-automatically Apache-2.0.
+must be recorded in `THIRD_PARTY_NOTICES.md`. Downstream repositories may add
+make/model signal definitions, but this core must not absorb those protocol
+artifacts. If a contribution is copied here in the future, record its exact
+source, commit, access date, and required notice before merging it.
 
 Never commit or attach a raw vehicle capture, VIN, credential, precise location,
 absolute timestamp, or non-anonymized trip data. Real captures are for private
@@ -88,7 +87,7 @@ Allowed `type` values:
 - `chore`: other maintenance.
 - `revert`: a reverted change.
 
-Recommended scopes: `core`, `can`, `weact`, `tcan485`, `capture`, `mazda-kf`, `simulator`, `argb`, `protocol`, `docs`, and `repo`.
+Recommended scopes: `core`, `can`, `tcan485`, `capture`, `simulator`, `docs`, and `repo`.
 
 Requirements:
 
@@ -103,7 +102,7 @@ Example:
 ```text
 feat(can): add timestamped listen-only frame capture
 
-Keep exporter output independent from Mazda signal decoding.
+Keep this core independent from make/model signal decoding and controller policy.
 
 Refs #12
 ```
@@ -118,7 +117,7 @@ Every PR body must state:
 - the related native GitHub Issue reference when applicable, and explicitly excluded scope;
 - which automated, bench, and vehicle tests were and were not run;
 - the impact on listen-only operation, CAN transmission paths, freshness/fail-silent behavior, and vehicle release artifacts;
-- affected hardware revision, pins, bitrate, or candidate DBC provenance;
+- affected hardware revision, pins, bitrate, or downstream protocol provenance;
 - risks, rollback, and follow-up work;
 - whether the change contains sensitive vehicle data, credentials, or third-party material.
 

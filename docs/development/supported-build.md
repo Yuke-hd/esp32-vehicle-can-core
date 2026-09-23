@@ -17,9 +17,9 @@ commands are the baseline evidence recorded for this change (the build path
 may be changed to another empty temporary directory):
 
 ```text
-cmake -S . -B /tmp/mazda-can-telemetry-host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build /tmp/mazda-can-telemetry-host --parallel
-ctest --test-dir /tmp/mazda-can-telemetry-host --output-on-failure
+cmake -S . -B /tmp/esp32-vehicle-can-core-host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build /tmp/esp32-vehicle-can-core-host --parallel
+ctest --test-dir /tmp/esp32-vehicle-can-core-host --output-on-failure
 ```
 
 The doctest dependency is fetched by CMake at configure time. Network access
@@ -30,9 +30,9 @@ command and mark the leg unavailable rather than claiming it passed.
 
 ## Sanitizer host build
 
-CI also runs every portable host test and the `vehicle_telemetry` service tests
-under AddressSanitizer (ASan) and UndefinedBehaviorSanitizer (UBSan). This
-gate is intentionally reproducible on the same `ubuntu-22.04` Linux runner
+CI also runs every portable host test under AddressSanitizer (ASan) and
+UndefinedBehaviorSanitizer (UBSan). This gate is intentionally reproducible on
+the same `ubuntu-22.04` Linux runner
 with the Ubuntu `clang-14` package, CMake, and Ninja. The sanitizer runtime is
 linked into each test executable and leak checking is enabled; a sanitizer
 diagnostic prints a stack trace and fails the job.
@@ -46,9 +46,9 @@ export CC=clang-14
 export CXX=clang++-14
 export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1:print_summary=1
 export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
-cmake -S . -B /tmp/mazda-can-telemetry-sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_BUILD_HOST_TESTS=ON -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-cmake --build /tmp/mazda-can-telemetry-sanitizers --parallel
-ctest --test-dir /tmp/mazda-can-telemetry-sanitizers --output-on-failure
+cmake -S . -B /tmp/esp32-vehicle-can-core-sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake --build /tmp/esp32-vehicle-can-core-sanitizers --parallel
+ctest --test-dir /tmp/esp32-vehicle-can-core-sanitizers --output-on-failure
 ```
 
 This is a host-only sanitizer gate. The supported sanitizer combination is
@@ -60,6 +60,7 @@ not use the host sanitizer runtime. Do not disable leak detection or add a
 blanket test exclusion when reproducing a failure: fix the reported test or
 record the specific unsupported platform/toolchain instead.
 
-The firmware builds remain separately pinned to ESP-IDF `v5.5.4`; see the
-[MCAN-3 scaffold](mcan-3-scaffold.md) for the isolated vehicle and bench
-commands.
+The retained firmware build is separately pinned to ESP-IDF `v5.5.4`; see the
+[MCAN-3 scaffold](mcan-3-scaffold.md) for the isolated T-CAN485 bench
+commands. Make/model controller firmware is built and released from its
+downstream controller repository.

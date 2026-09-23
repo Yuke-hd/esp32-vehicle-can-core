@@ -14,8 +14,10 @@ Before creating product-development tickets, establish an auditable GitHub repos
 
 ## Adopted Defaults
 
-- GitHub repository: `Yuke-hd/mazda-can-telemetry`.
-- Description: `Read-only Mazda CX-5 KF CAN telemetry decoder, ESP32 exporter, and isolated bench simulator.`
+- GitHub repository: `Yuke-hd/esp32-vehicle-can-core` (renamed from the
+  historical migration origin `Yuke-hd/mazda-can-telemetry` on 2026-09-23);
+  package identity: `esp32-vehicle-can-core`.
+- Description: `Portable vehicle CAN primitives, ESP32 receive transport, and isolated bench firmware.`
 - Visibility: **public** by explicit project decision. Project-authored material is Apache-2.0; third-party attribution and vehicle-data anonymization are governed by [the confirmed MCAN-2 policy](../policies/license-and-vehicle-data.md).
 - Default branch: `main`.
 - Work tracking: GitHub Issues. Use GitHub's native Issue references; an MCAN number is not required. Do not create product backlog Issues until this work item passes acceptance.

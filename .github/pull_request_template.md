@@ -4,7 +4,7 @@
 
 ## Related issue
 
-<!-- Use `Closes #123` only when this PR fully satisfies the issue. -->
+<!-- Use Closes #123 only when this PR fully satisfies the issue. -->
 
 Refs #
 
@@ -16,21 +16,31 @@ Refs #
 
 ### Not included
 
--
+- Make/model decoders, vehicle services, and product firmware; maintain those
+  changes in the consuming controller repository.
 
 ## Safety impact
 
-- [ ] Vehicle firmware remains CAN listen-only and has no business-level transmit API.
+- [ ] Any retained firmware target in this repository remains receive-only;
+      active CAN transmission is confined to the explicitly isolated bench ACK
+      target.
+- [ ] This repository does not own or build a make/model vehicle product;
+      those artifacts belong in a consuming controller repository.
 - [ ] Startup, stale-data, reset, and failure behavior remain fail-silent.
-- [ ] No active CAN test target or `BENCH_ACK_ONLY` artifact can be mistaken for a vehicle build.
-- [ ] Not applicable; this PR cannot affect CAN, vehicle builds, or hardware. Explanation:
+- [ ] No active CAN test target or BENCH_ACK_ONLY artifact can be mistaken for
+      a vehicle build.
+- [ ] Not applicable for a library/docs/tooling-only change; this PR cannot
+      affect CAN, vehicle builds, or hardware. Explanation:
 
 ## Validation
 
 ### Automated
 
-- [ ] Relevant host/unit/replay tests passed.
+- [ ] Relevant host/unit/contract tests passed.
 - [ ] Not run. Reason:
+
+<!-- If this change moves or removes a product target, state the destination
+repository and whether it has a configured publishing remote. -->
 
 ### Bench hardware
 
@@ -39,12 +49,14 @@ Refs #
 
 ### Vehicle
 
-- [ ] Performed on the target vehicle under the documented safety procedure. Results:
+- [ ] Not applicable; this repository has no vehicle firmware artifact. Reason:
+- [ ] Performed on a destination-repository vehicle target under its documented
+      safety procedure. Results:
 - [ ] Not run. Reason:
 
 ## Hardware and data evidence
 
-<!-- Board revision, pins, bitrate, capture fixture, DBC source/commit, signal confidence. -->
+<!-- Board revision, pins, bitrate, capture fixture, or signal provenance. -->
 
 ## Privacy and third-party material
 

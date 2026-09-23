@@ -1,100 +1,73 @@
-# Mazda CAN Telemetry
+# ESP32 Vehicle CAN Core
 
-A receive-only Mazda CX-5 KF CAN telemetry project built around a portable vehicle-state decoder library. The approved product/vehicle target is WeAct Studio CAN485 DevBoard V1.1. Its `firmware/weact-can485-v1.1` image is strict classic-CAN listen-only. The separately named `firmware/tcan485-bench-ack-only` target is reserved for isolated LILYGO/TTGO bench ACK testing and must never be connected to a vehicle. SavvyCAN is the external tool for private analysis and isolated-bench work; it is not a repository-owned product and does not authorize vehicle-side CAN transmission. The WeAct application consumes a background telemetry facade and the independent ARGB renderer receives only a private generic RGB/deadline command.
+Make-agnostic C++17 vehicle CAN primitives with ESP32/ESP-IDF transport,
+bounded queues, health/freshness contracts, host tests, and an isolated
+T-CAN485 bench-ACK firmware target. The canonical repository and package
+identity are `esp32-vehicle-can-core`; the canonical GitHub repository is
+`https://github.com/Yuke-hd/esp32-vehicle-can-core`.
 
-The current validation vehicle is an Australian-market 2019 Mazda CX-5 Akera with the 2.5T engine, six-speed automatic transmission, AWD, and MRCC. Third-party DBC definitions are candidate leads only; the reviewed capture-derived definitions for Issue #51 are committed in [`docs/protocol/mazda_custom.dbc`](docs/protocol/mazda_custom.dbc) and only the listed signals are confirmed for this vehicle.
+This repository is the reusable foundation for downstream vehicle projects.
+It deliberately does not contain a make/model decoder, product publication
+service, lighting policy, board product, DBC, or vehicle capture. Those belong
+in the consuming controller repository. Host consumers use CMake FetchContent
+and ESP-IDF consumers use a pinned Component Manager Git dependency; see
+[`docs/development/consumer-integration.md`](docs/development/consumer-integration.md).
 
-## MCAN-3 build scaffold
+## Contents and ownership
 
-The portable C++17 `vehicle_core` library and its host tests are configured at
-the repository root. The WeAct V1.1 vehicle firmware lives under
-`firmware/weact-can485-v1.1`. See
-[`docs/development/mcan-3-scaffold.md`](docs/development/mcan-3-scaffold.md)
-for pinned tool versions and reproducible commands.
-Confirmed Mazda signal decoding, deterministic synthetic test vectors, provenance, and
-freshness boundaries are documented in
-[`docs/development/mcan-14-candidate-decoders.md`](docs/development/mcan-14-candidate-decoders.md).
-Deterministic host tests retain direct synthetic frame and injected-time helpers;
-the repository does not provide a capture parser, custom capture format, exporter,
-or public replay product.
+- `components/vehicle_core`: portable frame, time, signal, reading, notification,
+  health, and decoder-contract types. It has no ESP-IDF, RTOS, transport, or
+  make/model dependency.
+- `components/vehicle_telemetry`: make-agnostic runtime that composes injected
+  acquisition, frame-processing, and observer strategies. It owns lifecycle,
+  timeout, and transport diagnostics, not product semantics.
+- `components/can_bus`: ESP-IDF/TWAI receive-only transport with bounded
+  buffering and diagnostics.
+- `components/bench_can_ack`: the explicitly isolated normal-mode CAN ACK
+  adapter. It is not a vehicle or product transport.
+- `firmware/tcan485-bench-ack-only`: separately named ESP32 bench firmware
+  that may acknowledge classic-CAN traffic on a protected bench only.
 
-## Development prerequisites
+## Build and test
 
-The following tools are needed to configure, build, format, validate, and test
-the repository. The [MCAN-3 scaffold](docs/development/mcan-3-scaffold.md)
-contains the complete commands and exact dependency pins; run
-`tools/check_toolchain.py --scope <host|firmware|all>` before a
-build. Missing tools and version mismatches are reported together with an
-official installation link.
+Required host tools are Bash, Git, Python 3.8+, ripgrep, a C++17 compiler,
+CMake 3.20+, Ninja, and clang-format 14. ESP-IDF v5.5.4 and its ESP32
+toolchain apply only to the isolated bench firmware:
 
-For the tested CMake minimum and modern compatibility matrix, see
-[`docs/development/supported-build.md`](docs/development/supported-build.md).
+    python3 tools/check_toolchain.py --scope host
+    cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+    cmake --build build/host --parallel
+    ctest --test-dir build/host --output-on-failure
 
-| Workflow | Required tool | Supported version or constraint | Purpose and installation |
-| --- | --- | --- | --- |
-| Host library/tests | Bash/Linux shell, Git, Python 3, ripgrep | Bash and Git current supported releases; Python >= 3.8; ripgrep current supported release | Repository commands and source discovery ([Bash](https://www.gnu.org/software/bash/), [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git), [Python](https://www.python.org/downloads/), [ripgrep](https://github.com/BurntSushi/ripgrep#installation)) |
-| Host library/tests | C++17 compiler, CMake, Ninja | C++17; CMake >= 3.20; Ninja current supported release | Configure and build the portable library/tests ([compiler](https://gcc.gnu.org/install/), [CMake](https://cmake.org/download/), [Ninja](https://ninja-build.org/)) |
-| Host library/tests | clang-format | Major version 14 (`clang-format-14`) | Enforce C++ formatting ([LLVM documentation](https://clang.llvm.org/docs/ClangFormat.html)) |
-| ESP32 firmware targets | ESP-IDF and `idf.py` | Exactly v5.5.4, target `esp32` | Build the WeAct V1.1 strict vehicle listen-only target or the separately named T-CAN485 isolated `BENCH_ACK_ONLY` target ([official guide](https://docs.espressif.com/projects/esp-idf/en/v5.5.4/esp32/get-started/)) |
+For the bench project:
 
-Host tools are required for the common library, formatting, and test workflow;
-ESP-IDF and its ESP32 toolchain apply to both firmware targets.
-CMake's doctest dependency and ESP-IDF managed components are resolved by their
-respective build systems, not installed as separate repository prerequisites.
-ESP-IDF must be installed and activated using its upstream guide.
+    python3 tools/check_toolchain.py --scope firmware
+    cd firmware/tcan485-bench-ack-only
+    idf.py set-target esp32
+    idf.py build
 
-The `firmware/weact-can485-v1.1` target is named
-`weact_can485_v11_vehicle_listen_only` and
-initializes a bounded strict listen-only CAN acquisition path. It does not
-decode, capture, export, or transmit frames. The separately named
-`firmware/tcan485-bench-ack-only` target is an LILYGO/TTGO isolated bench
-receiver that uses normal mode only to ACK classic-CAN traffic; it has no
-public frame-transmission API and must never be connected to a vehicle. See
+The bench project uses TWAI normal mode only to ACK compliant classic-CAN
+frames on an isolated, protected bench. It has no public data-frame transmit
+API and must never be connected to a vehicle. See
 [`docs/development/mcan-13-bench-ack-only.md`](docs/development/mcan-13-bench-ack-only.md)
-for its build, release, and physical-isolation boundary.
+for the physical isolation boundary.
 
-The exact WeAct V1.1 pin map, CA-IS2062A/CA-IS2092A/CH343P/FPC-18 identity,
-K3 OFF requirement, and evidence limitations are recorded in
-[`docs/hardware/weact-can485-v1.1.md`](docs/hardware/weact-can485-v1.1.md).
-MCAN-39 holds the WS2812B data line low to prevent new command pulses; that
-cannot clear a pixel latched across a warm reset. MCAN-16 adds the required RMT
-black startup frame and a lower-priority, fail-off semantic LED worker. See
-[`docs/development/mcan-16-local-argb.md`](docs/development/mcan-16-local-argb.md).
-Its blocking third-party RMT refresh and complete worker progress are separately
-supervised: a stall exceeding 100 ms triggers a reboot path that sends startup
-black again before CAN starts.
+## Safety boundary
 
-The current application integration is recorded in
-[`docs/development/mcan-64-firmware-integration.md`](docs/development/mcan-64-firmware-integration.md).
-It starts board safe defaults and the ARGB startup-black frame before the
-facade starts CAN, polls speed/RPM at an application-selected cadence, and
-handles typed turn notices without a manual receive/decode/LED loop. The
-vehicle build does not select the temporary `local_argb_compat` adapter; the
-isolated bench build remains explicitly separate.
-
-## Safety Boundary
-
-- Vehicle firmware is CAN listen-only. It performs no control, diagnostic polling, or frame injection.
-- Active transmission is permitted only in a physically isolated and prominently marked bench target.
-- This project is not a replacement for the factory instrument cluster and must not be used for safety-critical decisions.
-- Wiring, termination, power, listen-only behavior, and fail-silent operation must pass bench validation before the first vehicle connection.
-
-The authoritative product and engineering requirements are maintained in
-[Notion](https://app.notion.com/p/mazda-can-telemetry-3bab6bac581680bea756f017dc3dc347).
-See [CONTRIBUTING.md](CONTRIBUTING.md) for collaboration rules and repository
-safety boundaries. The
-first formal work item is [repository bootstrap and governance](docs/work-items/0001-repository-bootstrap.md).
+- Shared CAN acquisition is receive-only and has no business-level transmit
+  API.
+- Active transmission is permitted only in the explicitly named isolated
+  bench target.
+- This project is not a replacement for a factory instrument cluster and
+  must not be used for safety-critical decisions.
+- Wiring, termination, power, and fail-silent behavior require appropriate
+  bench validation before any vehicle connection.
 
 ## License and data policy
 
 Project-authored source, documentation, tests, and tooling are licensed under
-the [Apache License 2.0](LICENSE). Candidate signal material from
-[comma.ai/opendbc](https://github.com/commaai/opendbc) remains under its MIT
-license and is attributed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-Raw vehicle captures are private analysis data and must not be committed,
-attached to Issues, or shared externally. Only a reviewed anonymized fixture
-may be published, and it must contain no VIN, credentials, precise location,
-absolute timestamp, or reconstructable trip pattern. See the complete
-[license and vehicle-data policy](docs/policies/license-and-vehicle-data.md)
-and the contributor checklist in [CONTRIBUTING.md](CONTRIBUTING.md).
+the [Apache License 2.0](LICENSE). This core contains no vehicle signal
+definitions or private captures. If a downstream project adds vehicle data,
+it must apply its own provenance and privacy review; the generic policy in
+[`docs/policies/license-and-vehicle-data.md`](docs/policies/license-and-vehicle-data.md)
+remains a useful baseline.

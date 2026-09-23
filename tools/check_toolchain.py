@@ -170,7 +170,7 @@ def _find_executable(executable: str) -> Optional[str]:
 
 def check(scope: str) -> int:
     failures = 0
-    print(f"MCAN toolchain check: {scope}")
+    print(f"ESP32 vehicle CAN core toolchain check: {scope}")
     for requirement in REQUIREMENTS:
         if scope not in requirement.scopes:
             continue
