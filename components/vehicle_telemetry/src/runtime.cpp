@@ -142,12 +142,12 @@ public:
       worker_active_.store(false, std::memory_order_release);
       stop_requested_.store(true, std::memory_order_release);
       const auto cleanup_result = attempt_source_stop();
-      const auto final_state = cleanup_result.ok() ? LifecycleState::Stopped
-                                                   : LifecycleState::Faulted;
+      const auto final_state =
+          cleanup_result.ok() ? LifecycleState::Stopped : LifecycleState::Faulted;
       lifecycle_.store(final_state, std::memory_order_release);
       set_lifecycle_diagnostic(final_state, cleanup_result.ok()
-                                               ? vehicle_core::TransportHealth::Stopped
-                                               : vehicle_core::TransportHealth::Faulted);
+                                                ? vehicle_core::TransportHealth::Stopped
+                                                : vehicle_core::TransportHealth::Faulted);
       lifecycle_lock.lock();
       lifecycle_operation_active_ = false;
       lifecycle_lock.unlock();
@@ -160,12 +160,12 @@ public:
       worker_active_.store(false, std::memory_order_release);
       stop_requested_.store(true, std::memory_order_release);
       const auto cleanup_result = attempt_source_stop();
-      const auto final_state = cleanup_result.ok() ? LifecycleState::Stopped
-                                                   : LifecycleState::Faulted;
+      const auto final_state =
+          cleanup_result.ok() ? LifecycleState::Stopped : LifecycleState::Faulted;
       lifecycle_.store(final_state, std::memory_order_release);
       set_lifecycle_diagnostic(final_state, cleanup_result.ok()
-                                               ? vehicle_core::TransportHealth::Stopped
-                                               : vehicle_core::TransportHealth::Faulted);
+                                                ? vehicle_core::TransportHealth::Stopped
+                                                : vehicle_core::TransportHealth::Faulted);
       lifecycle_lock.lock();
       lifecycle_operation_active_ = false;
       lifecycle_lock.unlock();
@@ -340,9 +340,9 @@ private:
     }
 
     const auto current_result = source_stop_result_;
-    const bool cleanup_complete = source_stop_result_.ok() ||
-                                  (source_stop_retry_supported_ &&
-                                   source_stop_result_.status == ResultCode::NotRunning);
+    const bool cleanup_complete =
+        source_stop_result_.ok() ||
+        (source_stop_retry_supported_ && source_stop_result_.status == ResultCode::NotRunning);
     if (cleanup_complete) {
       source_started_ = false;
       source_ownership_ = SourceOwnership::None;

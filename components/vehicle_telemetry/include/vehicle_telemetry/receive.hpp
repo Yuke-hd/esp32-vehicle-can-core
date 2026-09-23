@@ -36,9 +36,7 @@ public:
   // succeeds or the source reports NotRunning. The default preserves the
   // one-shot contract for sources that cannot safely retry stop().
   [[nodiscard]] virtual bool supports_stop_retry() const noexcept { return false; }
-  [[nodiscard]] virtual StatusResult retry_stop() noexcept {
-    return {ResultCode::InvalidState};
-  }
+  [[nodiscard]] virtual StatusResult retry_stop() noexcept { return {ResultCode::InvalidState}; }
   [[nodiscard]] virtual ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
                                               std::uint32_t timeout_ms) noexcept = 0;
   [[nodiscard]] virtual AcquisitionStatistics statistics() const noexcept = 0;
