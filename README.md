@@ -2,7 +2,7 @@
 
 Make-agnostic C++17 vehicle CAN primitives with ESP32/ESP-IDF transport,
 bounded queues, health/freshness contracts, host tests, and an isolated
-T-CAN485 bench-ACK firmware target. The intended repository name and package
+T-CAN485 bench-ACK firmware target. The canonical repository and package
 identity are `esp32-vehicle-can-core`; the canonical GitHub repository is
 `https://github.com/Yuke-hd/esp32-vehicle-can-core`.
 
