@@ -14,7 +14,8 @@ Before creating product-development tickets, establish an auditable GitHub repos
 
 ## Adopted Defaults
 
-- GitHub repository: migration origin `Yuke-hd/mazda-can-telemetry`; intended
+- GitHub repository: `Yuke-hd/esp32-vehicle-can-core` (renamed from the
+  historical migration origin `Yuke-hd/mazda-can-telemetry` on 2026-09-23);
   package identity: `esp32-vehicle-can-core`.
 - Description: `Portable vehicle CAN primitives, ESP32 receive transport, and isolated bench firmware.`
 - Visibility: **public** by explicit project decision. Project-authored material is Apache-2.0; third-party attribution and vehicle-data anonymization are governed by [the confirmed MCAN-2 policy](../policies/license-and-vehicle-data.md).

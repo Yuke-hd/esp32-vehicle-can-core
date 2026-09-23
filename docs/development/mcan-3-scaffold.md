@@ -6,10 +6,11 @@ vehicle product repository: make/model decoders, telemetry services, lighting
 policy, board support, DBC files, and vehicle captures belong in a consuming
 controller repository.
 
-The intended package identity is `esp32-vehicle-can-core`. The current GitHub
-URL remains the migration origin until the repository is renamed by an
-administrator. Downstream consumers pin the generic components with host
-FetchContent or the ESP-IDF Component Manager; see
+The package identity and canonical GitHub repository are
+`esp32-vehicle-can-core` and
+`https://github.com/Yuke-hd/esp32-vehicle-can-core`. Downstream consumers pin
+the generic components with host FetchContent or the ESP-IDF Component Manager;
+see
 [`consumer-integration.md`](consumer-integration.md).
 
 ## Pinned toolchains

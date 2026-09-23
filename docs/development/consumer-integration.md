@@ -16,7 +16,7 @@ include(FetchContent)
 
 FetchContent_Declare(
   vehicle_can_core
-  GIT_REPOSITORY https://github.com/Yuke-hd/mazda-can-telemetry.git
+  GIT_REPOSITORY https://github.com/Yuke-hd/esp32-vehicle-can-core.git
   GIT_TAG <reviewed-core-commit>
   SOURCE_SUBDIR components/vehicle_core
 )
@@ -25,9 +25,8 @@ FetchContent_MakeAvailable(vehicle_can_core)
 target_link_libraries(my_controller PRIVATE vehicle_core)
 ```
 
-Use the renamed `esp32-vehicle-can-core` URL after the GitHub repository is
-renamed. The fetched component exposes the ordinary-CMake `vehicle_core`
-target and does not configure this repository's host tests. A controller may
+The fetched component exposes the ordinary-CMake `vehicle_core` target and does
+not configure this repository's host tests. A controller may
 fetch `components/vehicle_telemetry` separately with the same pattern if it
 needs the generic runtime.
 
@@ -38,12 +37,12 @@ Declare the pinned component in the consuming component's `idf_component.yml`:
 ```yaml
 dependencies:
   vehicle_core:
-    git: https://github.com/Yuke-hd/mazda-can-telemetry.git
+    git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
     path: components/vehicle_core
     version: "<reviewed-core-commit>"
 ```
 
-Use the renamed URL after the repository rename. If the controller also uses
+If the controller also uses
 the generic runtime or receive transport, declare `vehicle_telemetry` and
 `can_bus` as separate Git dependencies with the same reviewed repository
 commit and paths. Do not add copied component directories under the controller
