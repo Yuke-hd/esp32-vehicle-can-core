@@ -15,6 +15,8 @@ public:
 
   [[nodiscard]] StatusResult start() noexcept override;
   [[nodiscard]] StatusResult stop() noexcept override;
+  [[nodiscard]] bool supports_stop_retry() const noexcept override;
+  [[nodiscard]] StatusResult retry_stop() noexcept override;
   [[nodiscard]] ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
                                       std::uint32_t timeout_ms) noexcept override;
   [[nodiscard]] AcquisitionStatistics statistics() const noexcept override;

@@ -79,9 +79,11 @@ public:
     lifecycle_lock.unlock();
 
     processor_->reset();
+    source_stop_retry_supported_ = source_->supports_stop_retry();
     const auto source_result = source_->start();
     if (!source_result.ok()) {
       if (!start_failure_may_own_source(source_result.status)) {
+        source_stop_retry_supported_ = false;
         update_after_start_failure(source_result.status);
         lifecycle_lock.lock();
         lifecycle_operation_active_ = false;
@@ -90,9 +92,9 @@ public:
       }
 
       // A source may have installed part of its acquisition boundary before
-      // reporting a driver/task failure. This is a separate partial-start
-      // ownership interval from a successful run, so it has its own bounded
-      // two-attempt cleanup contract.
+      // reporting a driver/task failure. Partial-start cleanup gets one
+      // bounded retry by default; sources that opt into stop retries retain
+      // ownership for later Runtime::stop() attempts until cleanup succeeds.
       source_started_ = true;
       source_ownership_ = SourceOwnership::PartialStart;
       partial_cleanup_attempts_ = 0;
@@ -127,14 +129,25 @@ public:
     lifecycle_.store(LifecycleState::Running, std::memory_order_release);
 
 #if defined(ESP_PLATFORM)
-    const auto created = xTaskCreate(&RuntimeImplementation::task_entry, "vehicle_telemetry", 4096,
-                                     this, tskIDLE_PRIORITY + 1, &task_);
+    BaseType_t created;
+    {
+      // The new task may run before xTaskCreate returns. Hold the handle mutex
+      // until the out-parameter has been published so task_entry() cannot clear
+      // it before the creator has stored it.
+      std::lock_guard<std::mutex> task_lock{task_handle_mutex_};
+      created = xTaskCreate(&RuntimeImplementation::task_entry, "vehicle_telemetry", 4096, this,
+                            tskIDLE_PRIORITY + 1, &task_);
+    }
     if (created != pdPASS) {
       worker_active_.store(false, std::memory_order_release);
       stop_requested_.store(true, std::memory_order_release);
-      (void)stop_source_once();
-      lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
-      set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+      const auto cleanup_result = attempt_source_stop();
+      const auto final_state = cleanup_result.ok() ? LifecycleState::Stopped
+                                                   : LifecycleState::Faulted;
+      lifecycle_.store(final_state, std::memory_order_release);
+      set_lifecycle_diagnostic(final_state, cleanup_result.ok()
+                                               ? vehicle_core::TransportHealth::Stopped
+                                               : vehicle_core::TransportHealth::Faulted);
       lifecycle_lock.lock();
       lifecycle_operation_active_ = false;
       lifecycle_lock.unlock();
@@ -146,9 +159,13 @@ public:
     } catch (...) {
       worker_active_.store(false, std::memory_order_release);
       stop_requested_.store(true, std::memory_order_release);
-      (void)stop_source_once();
-      lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
-      set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+      const auto cleanup_result = attempt_source_stop();
+      const auto final_state = cleanup_result.ok() ? LifecycleState::Stopped
+                                                   : LifecycleState::Faulted;
+      lifecycle_.store(final_state, std::memory_order_release);
+      set_lifecycle_diagnostic(final_state, cleanup_result.ok()
+                                               ? vehicle_core::TransportHealth::Stopped
+                                               : vehicle_core::TransportHealth::Faulted);
       lifecycle_lock.lock();
       lifecycle_operation_active_ = false;
       lifecycle_lock.unlock();
@@ -166,8 +183,11 @@ public:
     if (worker_.joinable() && worker_.get_id() == std::this_thread::get_id())
       return {ResultCode::InvalidState};
 #else
-    if (task_ == xTaskGetCurrentTaskHandle())
-      return {ResultCode::InvalidState};
+    {
+      std::lock_guard<std::mutex> task_lock{task_handle_mutex_};
+      if (task_ == xTaskGetCurrentTaskHandle())
+        return {ResultCode::InvalidState};
+    }
 #endif
 
     std::unique_lock<std::mutex> lifecycle_lock{lifecycle_mutex_};
@@ -209,7 +229,7 @@ public:
     set_lifecycle_diagnostic(LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped);
     stop_requested_.store(true, std::memory_order_release);
 
-    const auto source_result = stop_source_once();
+    const auto source_result = attempt_source_stop();
     if (source_result.status == ResultCode::Timeout ||
         source_result.status == ResultCode::Stopping) {
       lifecycle_lock.lock();
@@ -237,7 +257,6 @@ public:
     }
 #endif
 
-    worker_active_.store(false, std::memory_order_release);
     const auto final_state = source_result.ok() ? LifecycleState::Stopped : LifecycleState::Faulted;
     const auto final_transport = source_result.ok() ? vehicle_core::TransportHealth::Stopped
                                                     : vehicle_core::TransportHealth::Faulted;
@@ -307,33 +326,61 @@ private:
       diagnostics_.transport = vehicle_core::TransportHealth::TimedOut;
   }
 
-  [[nodiscard]] StatusResult stop_source_once() noexcept {
-    if (source_ownership_ != SourceOwnership::SuccessfulStart || !source_started_ ||
-        source_stop_called_)
+  [[nodiscard]] StatusResult attempt_source_stop() noexcept {
+    if (source_ownership_ != SourceOwnership::SuccessfulStart || !source_started_)
       return source_stop_result_;
-    source_stop_called_ = true;
-    source_stop_result_ = source_->stop();
-    // A source stop is an ownership handoff even when the source reports a
-    // bounded timeout. A subsequent Runtime::stop() retries only the worker
-    // join; it never invokes a non-idempotent source twice.
-    source_started_ = false;
-    source_ownership_ = SourceOwnership::None;
+
+    if (source_stop_called_) {
+      if (!source_stop_retry_supported_)
+        return source_stop_result_;
+      source_stop_result_ = source_->retry_stop();
+    } else {
+      source_stop_called_ = true;
+      source_stop_result_ = source_->stop();
+    }
+
+    const auto current_result = source_stop_result_;
+    const bool cleanup_complete = source_stop_result_.ok() ||
+                                  (source_stop_retry_supported_ &&
+                                   source_stop_result_.status == ResultCode::NotRunning);
+    if (cleanup_complete) {
+      source_started_ = false;
+      source_ownership_ = SourceOwnership::None;
+      source_stop_called_ = false;
+      source_stop_retry_supported_ = false;
+      source_stop_result_ = {ResultCode::Ok};
+    } else if (!source_stop_retry_supported_) {
+      // Preserve the legacy one-shot handoff for sources that do not opt into
+      // retained cleanup ownership and explicit retries.
+      source_started_ = false;
+      source_ownership_ = SourceOwnership::None;
+      source_stop_called_ = false;
+      source_stop_result_ = {ResultCode::Ok};
+      return current_result;
+    }
     return source_stop_result_;
   }
 
   [[nodiscard]] StatusResult attempt_partial_start_cleanup() noexcept {
     if (source_ownership_ != SourceOwnership::PartialStart || !source_started_)
       return {ResultCode::Ok};
-    if (partial_cleanup_attempts_ >= 2)
+    if (partial_cleanup_attempts_ >= 2 && !source_stop_retry_supported_)
       return source_stop_result_;
 
     ++partial_cleanup_attempts_;
-    source_stop_result_ = source_->stop();
+    if (source_stop_retry_supported_ && source_stop_called_) {
+      source_stop_result_ = source_->retry_stop();
+    } else {
+      source_stop_called_ = true;
+      source_stop_result_ = source_->stop();
+    }
     if (source_stop_result_.ok() || source_stop_result_.status == ResultCode::NotRunning) {
       source_started_ = false;
       source_ownership_ = SourceOwnership::None;
+      source_stop_called_ = false;
+      source_stop_retry_supported_ = false;
       // NotRunning is a successful defensive reconciliation: the source
-      // confirms that the failed start never acquired an owned boundary.
+      // confirms that cleanup completed or the failed start acquired no owner.
       source_stop_result_ = {ResultCode::Ok};
     }
     return source_stop_result_;
@@ -342,7 +389,7 @@ private:
   void shutdown_noexcept() noexcept {
     stop_requested_.store(true, std::memory_order_release);
     if (source_ownership_ == SourceOwnership::SuccessfulStart)
-      (void)stop_source_once();
+      (void)attempt_source_stop();
     else if (source_ownership_ == SourceOwnership::PartialStart)
       (void)attempt_partial_start_cleanup();
 #if !defined(ESP_PLATFORM)
@@ -351,11 +398,20 @@ private:
 #else
     // A FreeRTOS task cannot outlive this inline implementation. The bounded
     // public stop path reports a timeout to callers, while destruction waits
-    // for the source's one-shot cancellation request to be acknowledged.
+    // for the worker to acknowledge cancellation.
     constexpr TickType_t kWaitTicks = pdMS_TO_TICKS(1) == 0 ? 1 : pdMS_TO_TICKS(1);
     while (worker_active_.load(std::memory_order_acquire))
       vTaskDelay(kWaitTicks);
 #endif
+    // Retry opt-in cleanup after the worker has stopped using the source.
+    // Public stop() remains bounded; destruction cannot leave retained source
+    // ownership behind without a final cleanup attempt.
+    if (source_stop_retry_supported_ && source_started_) {
+      if (source_ownership_ == SourceOwnership::SuccessfulStart)
+        (void)attempt_source_stop();
+      else if (source_ownership_ == SourceOwnership::PartialStart)
+        (void)attempt_partial_start_cleanup();
+    }
   }
 
   [[nodiscard]] TransportDiagnostics
@@ -437,14 +493,23 @@ private:
         stop_requested_.store(true, std::memory_order_release);
       }
     }
+#if !defined(ESP_PLATFORM)
     worker_active_.store(false, std::memory_order_release);
+#endif
   }
 
 #if defined(ESP_PLATFORM)
   static void task_entry(void *raw) noexcept {
     auto *implementation = static_cast<RuntimeImplementation *>(raw);
     implementation->run_loop();
-    implementation->task_ = nullptr;
+    {
+      std::lock_guard<std::mutex> task_lock{implementation->task_handle_mutex_};
+      implementation->task_ = nullptr;
+    }
+    // Publish completion after every access to the inline implementation,
+    // including unlocking the task-handle mutex. stop()/destruction may then
+    // safely observe false and allow the owning Runtime to be destroyed.
+    implementation->worker_active_.store(false, std::memory_order_release);
     vTaskDelete(nullptr);
   }
 #endif
@@ -466,7 +531,9 @@ private:
   bool source_stop_called_{false};
   std::uint8_t partial_cleanup_attempts_{0};
   StatusResult source_stop_result_{ResultCode::Ok};
+  bool source_stop_retry_supported_{false};
 #if defined(ESP_PLATFORM)
+  std::mutex task_handle_mutex_{};
   TaskHandle_t task_{nullptr};
 #else
   std::thread worker_{};

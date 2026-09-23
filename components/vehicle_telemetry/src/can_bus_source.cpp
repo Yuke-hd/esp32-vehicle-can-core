@@ -53,6 +53,10 @@ StatusResult CanBusSource::start() noexcept {
 
 StatusResult CanBusSource::stop() noexcept { return map_stop_result(can_bus::stop()); }
 
+bool CanBusSource::supports_stop_retry() const noexcept { return true; }
+
+StatusResult CanBusSource::retry_stop() noexcept { return map_stop_result(can_bus::stop()); }
+
 ReceiveStatus CanBusSource::receive(vehicle_core::RawCanFrame &frame,
                                     const std::uint32_t timeout_ms) noexcept {
   switch (can_bus::receive(frame, timeout_ms)) {
