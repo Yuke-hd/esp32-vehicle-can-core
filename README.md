@@ -1,73 +1,155 @@
 # ESP32 Vehicle CAN Core
 
-Make-agnostic C++17 vehicle CAN primitives with ESP32/ESP-IDF transport,
-bounded queues, health/freshness contracts, host tests, and an isolated
-T-CAN485 bench-ACK firmware target. The canonical repository and package
-identity are `esp32-vehicle-can-core`; the canonical GitHub repository is
-`https://github.com/Yuke-hd/esp32-vehicle-can-core`.
+ESP32/ESP-IDF components for vehicle CAN acquisition and telemetry with portable host builds and tests. 
 
-This repository is the reusable foundation for downstream vehicle projects.
-It deliberately does not contain a make/model decoder, product publication
-service, lighting policy, board product, DBC, or vehicle capture. Those belong
-in the consuming controller repository. Host consumers use CMake FetchContent
-and ESP-IDF consumers use a pinned Component Manager Git dependency; see
-[`docs/development/consumer-integration.md`](docs/development/consumer-integration.md).
+This repository is a reusable foundation for downstream vehicle projects. It
+does not include make/model decoding, product publication, lighting policy,
+board products, DBC files, or vehicle captures. Those belong in the consuming
+controller repository.
 
-## Contents and ownership
+## Contents
 
-- `components/vehicle_core`: portable frame, time, signal, reading, notification,
-  health, and decoder-contract types. It has no ESP-IDF, RTOS, transport, or
-  make/model dependency.
-- `components/vehicle_telemetry`: make-agnostic runtime that composes injected
-  acquisition, frame-processing, and observer strategies. It owns lifecycle,
-  timeout, and transport diagnostics, not product semantics.
-- `components/can_bus`: ESP-IDF/TWAI receive-only transport with bounded
-  buffering and diagnostics.
-- `components/bench_can_ack`: the explicitly isolated normal-mode CAN ACK
-  adapter. It is not a vehicle or product transport.
-- `firmware/tcan485-bench-ack-only`: separately named ESP32 bench firmware
-  that may acknowledge classic-CAN traffic on a protected bench only.
+- [About the project](#about-the-project)
+- [Components](#components)
+- [Getting started](#getting-started)
+  - [Host build and tests](#host-build-and-tests)
+  - [Isolated bench firmware](#isolated-bench-firmware)
+- [Usage](#usage)
+  - [ESP-IDF consumer](#esp-idf-consumer)
+- [Safety boundary](#safety-boundary)
+- [Contributing](#contributing)
+- [License and third-party notices](#license-and-third-party-notices)
 
-## Build and test
+## About the project
 
-Required host tools are Bash, Git, Python 3.8+, ripgrep, a C++17 compiler,
-CMake 3.20+, Ninja, and clang-format 14. ESP-IDF v5.5.4 and its ESP32
-toolchain apply only to the isolated bench firmware:
+The project separates portable CAN and telemetry contracts from ESP-IDF
+transport code. ESP-IDF controller projects can add the components they need
+through the Component Manager.
 
-    python3 tools/check_toolchain.py --scope host
-    cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-    cmake --build build/host --parallel
-    ctest --test-dir build/host --output-on-failure
+## Components
 
-For the bench project:
+| Component | Purpose |
+| --- | --- |
+| `vehicle_core` | Portable frame, time, signal, reading, notification, health, and decoder-contract types. It has no ESP-IDF, RTOS, transport, or make/model dependency. |
+| `vehicle_telemetry` | Generic runtime that composes injected acquisition, frame-processing, and observer strategies, and owns lifecycle and transport diagnostics. |
+| `can_bus` | ESP-IDF/TWAI receive-only transport with bounded buffering and diagnostics. |
+| `bench_can_ack` | Isolated adapter for acknowledging compliant classic-CAN frames on a protected bench. It is not a vehicle transport. |
 
-    python3 tools/check_toolchain.py --scope firmware
-    cd firmware/tcan485-bench-ack-only
-    idf.py set-target esp32
-    idf.py build
+## Getting started
 
-The bench project uses TWAI normal mode only to ACK compliant classic-CAN
-frames on an isolated, protected bench. It has no public data-frame transmit
-API and must never be connected to a vehicle. See
-[`docs/development/mcan-13-bench-ack-only.md`](docs/development/mcan-13-bench-ack-only.md)
-for the physical isolation boundary.
+The host build uses CMake and Ninja and requires a C++17 compiler. The
+repository's host toolchain check also requires Bash, Git, Python 3.8 or newer,
+`clang-format-14`, and ripgrep. Run the check before configuring:
+
+```sh
+python3 tools/check_toolchain.py --scope host
+```
+
+### Host build and tests
+
+From the repository root:
+
+```sh
+cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/host --parallel
+ctest --test-dir build/host --output-on-failure
+```
+
+On a clean build, CMake downloads the pinned doctest dependency during
+configuration, so network access is needed unless that source is already in
+the CMake FetchContent cache. See [supported host builds](docs/development/supported-build.md)
+for the supported CMake versions and optional sanitizer build.
+
+### Isolated bench firmware
+
+The separate `tcan485-bench-ack-only` project requires ESP-IDF v5.5.4 and its
+ESP32 toolchain. Activate the ESP-IDF environment, then run:
+
+```sh
+python3 tools/check_toolchain.py --scope firmware
+cd firmware/tcan485-bench-ack-only
+idf.py set-target esp32
+idf.py build
+```
+
+This firmware uses TWAI normal mode only to acknowledge compliant classic-CAN
+frames on an isolated, protected bench. It must never be connected to a
+vehicle. See the [bench target instructions](docs/development/mcan-13-bench-ack-only.md)
+for the physical isolation requirements.
+
+## Usage
+
+In an ESP-IDF downstream controller project, add the core components you need
+through the Component Manager and pin them to a reviewed commit. The example
+below declares `vehicle_core` and shows how to add optional runtime and
+transport components. See the
+[consumer integration guide](docs/development/consumer-integration.md) for
+dependency direction, updates, and ownership.
+
+The consuming controller owns its make/model decoder, signal definitions,
+publication contracts, board support, and firmware. This core keeps those
+project-specific behaviors outside its generic components.
+
+### ESP-IDF consumer
+
+In the downstream project's `main/idf_component.yml` (or the manifest for the
+component that uses the core), declare `vehicle_core` as a Git dependency.
+Replace the placeholder with a reviewed full commit SHA:
+
+```yaml
+dependencies:
+  vehicle_core:
+    git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
+    path: components/vehicle_core
+    version: "<reviewed-core-commit>"
+```
+
+If the controller uses `vehicle_telemetry`, also declare `can_bus`: the runtime
+requires it for its ESP-IDF TWAI adapter. The `can_bus` component can also be
+used without `vehicle_telemetry`. Add the needed entries as siblings of
+`vehicle_core` under the same `dependencies:` key, using the same reviewed
+commit for each:
+
+```yaml
+  vehicle_telemetry:
+    git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
+    path: components/vehicle_telemetry
+    version: "<reviewed-core-commit>"
+  can_bus:
+    git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
+    path: components/can_bus
+    version: "<reviewed-core-commit>"
+```
+
+Declare only the components the controller uses. The runtime accepts injected
+acquisition, processing, and observer strategies; the controller implements
+its own vehicle-specific behavior.
 
 ## Safety boundary
 
-- Shared CAN acquisition is receive-only and has no business-level transmit
-  API.
-- Active transmission is permitted only in the explicitly named isolated
+- Shared CAN acquisition is receive-only and exposes no business-level
+  transmit API.
+- Active CAN acknowledgement is limited to the explicitly named isolated
   bench target.
+- The bench target must remain disconnected from any vehicle harness.
 - This project is not a replacement for a factory instrument cluster and
   must not be used for safety-critical decisions.
 - Wiring, termination, power, and fail-silent behavior require appropriate
-  bench validation before any vehicle connection.
+  bench validation.
 
-## License and data policy
+See [receive-only acquisition](docs/development/mcan-7-listen-only-acquisition.md)
+for transport behavior and [license and vehicle-data policy](docs/policies/license-and-vehicle-data.md)
+for restrictions on captures and other vehicle data.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow, safety
+requirements, and vehicle-data rules. In particular, raw vehicle captures,
+VINs, credentials, precise locations, and non-anonymized trip data must not be
+committed or attached to public project artifacts.
+
+## License and third-party notices
 
 Project-authored source, documentation, tests, and tooling are licensed under
-the [Apache License 2.0](LICENSE). This core contains no vehicle signal
-definitions or private captures. If a downstream project adds vehicle data,
-it must apply its own provenance and privacy review; the generic policy in
-[`docs/policies/license-and-vehicle-data.md`](docs/policies/license-and-vehicle-data.md)
-remains a useful baseline.
+the [Apache License 2.0](LICENSE). Third-party dependencies and their licenses
+are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

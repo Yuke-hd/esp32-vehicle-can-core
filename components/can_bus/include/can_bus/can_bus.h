@@ -40,8 +40,9 @@ enum class LifecycleState : std::uint8_t {
   Faulted = kFaulted,
 };
 
-// Vehicle mode is deliberately not configurable. The implementation always
-// installs TWAI in strict listen-only mode and disables its TX queue.
+// TWAI mode and pins are supplied by the application's driver binding.
+// Vehicle integrations must select strict listen-only mode and disable the TX
+// queue; isolated bench adapters may select normal mode for ACK-only tests.
 struct Configuration {
   std::uint32_t bitrate_bps{500'000};
   std::uint8_t bus_id{0};
