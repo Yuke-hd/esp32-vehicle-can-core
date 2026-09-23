@@ -25,10 +25,15 @@ FetchContent_MakeAvailable(vehicle_can_core)
 target_link_libraries(my_controller PRIVATE vehicle_core)
 ```
 
-The fetched component exposes the ordinary-CMake `vehicle_core` target and does
-not configure this repository's host tests. A controller may
-fetch `components/vehicle_telemetry` separately with the same pattern if it
-needs the generic runtime.
+The fetched component exposes the ordinary-CMake `vehicle_core` target. Its
+own `vehicle_core_notification_tests` target is disabled by default, even when
+the consumer sets CTest's `BUILD_TESTING=ON`. Set
+`VEHICLE_CORE_BUILD_TESTS=ON` before `FetchContent_MakeAvailable` to opt in to
+that target; it also requires `Threads::Threads`. The repository root defaults
+this component option to its host-test setting, so root host CI continues to
+build and register the test. A controller may fetch
+`components/vehicle_telemetry` separately with the same pattern if it needs the
+generic runtime.
 
 ## ESP-IDF Component Manager Git dependency
 

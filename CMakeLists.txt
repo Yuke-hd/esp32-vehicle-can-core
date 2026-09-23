@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(VEHICLE_CAN_CORE_BUILD_HOST_TESTS "Build portable vehicle CAN core host tests" ${BUILD_TESTING})
+option(VEHICLE_CORE_BUILD_TESTS "Build the vehicle_core notification tests"
+       ${VEHICLE_CAN_CORE_BUILD_HOST_TESTS})
 
 add_subdirectory(components/vehicle_core)
 add_subdirectory(components/vehicle_telemetry)
