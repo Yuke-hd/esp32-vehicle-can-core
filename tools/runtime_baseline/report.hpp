@@ -3,12 +3,15 @@
 #include <cstdio>
 
 #include "fixture.hpp"
+#include "task_residency.hpp"
 
 namespace runtime_baseline {
 struct Run final {
   std::uint64_t elapsed_us{0}, stop_us{0};
   std::array<std::uint32_t, 2> idle_calls{};
   std::array<std::uint32_t, 2> maximum_idle_gap_us{};
+  TaskResidency residency{};
+  std::uint32_t watchdog_events{0};
 };
 inline void print_header() {
   std::puts(
@@ -20,7 +23,9 @@ inline void print_header() {
       "frame_observer_calls,frame_observer_total_us,frame_observer_max_us,"
       "diagnostic_calls,diagnostic_total_us,diagnostic_max_us,diagnostic_processed,"
       "diagnostic_ignored,diagnostic_malformed,running_core0,running_core1,"
-      "affinity_core0,affinity_core1,idle0,idle1,max_idle_gap0_us,max_idle_gap1_us");
+      "affinity_core0,affinity_core1,idle0,idle1,max_idle_gap0_us,max_idle_gap1_us,"
+      "scheduler_trace,max_residency0_us,max_residency1_us,residency_segments0,"
+      "residency_segments1,same_task_reselections0,same_task_reselections1,watchdog_events");
 }
 inline void print_run(const char *platform, const Scenario &scenario, unsigned repeat,
                       const Fixture &fixture, const Run &run) {
@@ -59,6 +64,14 @@ inline void print_run(const char *platform, const Scenario &scenario, unsigned r
     value(n);
   for (auto n : run.maximum_idle_gap_us)
     value(n);
+  value(run.residency.enabled ? 1 : 0);
+  for (const auto &core : run.residency.cores)
+    value(core.maximum_us);
+  for (const auto &core : run.residency.cores)
+    value(core.segments);
+  for (const auto &core : run.residency.cores)
+    value(core.reselections);
+  value(run.watchdog_events);
   std::puts("");
 }
 } // namespace runtime_baseline

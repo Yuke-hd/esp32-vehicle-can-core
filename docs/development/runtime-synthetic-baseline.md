@@ -140,3 +140,8 @@ execution; this fixture cannot infer it from wall spans. The supported hardware
 load envelope and actual fairness/watchdog conclusions remain pending. #133 may
 use the fixtures for before/after characterization, without treating them as
 completed hardware acceptance evidence.
+
+The follow-up [task residency and watchdog stress fixture](runtime-synthetic-bench.md)
+adds an optional dispatcher wrapper and configurable longer/load-specific runs.
+Its scheduler residency definition includes ISR overhead and is separate from
+the original source-wait wall span.
