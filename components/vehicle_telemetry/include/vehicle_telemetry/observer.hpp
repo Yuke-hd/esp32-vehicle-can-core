@@ -25,6 +25,9 @@ struct TransportDiagnostics final {
   std::uint64_t processor_faults{0};
   bool has_last_frame{false};
   vehicle_core::MonotonicTimestamp last_frame_us{0};
+  // Selected fairness-pause attempts, not proof of a kernel context switch.
+  // Resets at start; cancellation may interrupt an attempt.
+  std::uint64_t work_budget_pauses{0};
 };
 
 class FrameProcessor {

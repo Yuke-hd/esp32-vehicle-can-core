@@ -97,10 +97,14 @@ extern "C" void app_main() {
     esp_deregister_freertos_idle_hook_for_cpu(idle_hook, 0);
     return;
   }
+  vehicle_telemetry::RuntimeConfig config{};
+  config.receive_timeout_ms = 1;
   std::printf("metadata,esp32,idf=%s,cpu_mhz=%u,tick_hz=%u,diagnostics=both_callbacks,"
               "receive_timeout_ms=1,duration_ms=%u,repeats=%u,worker_priority=1,"
               "controller_priority=3,idle_hooks=both,optimization_perf=%u,compiler=%s,"
-              "checkpoint_wall_only=1,watchdog_timeout_s=%u,watchdog_panic=%u\n",
+              "checkpoint_wall_only=1,watchdog_timeout_s=%u,watchdog_panic=%u,"
+              "runtime_batch_frames=%u,runtime_batch_us=%llu,runtime_burst_calls=%u,"
+              "runtime_burst_us=%llu,runtime_pause_ms=%u\n",
               esp_get_idf_version(), CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ, configTICK_RATE_HZ,
               CONFIG_BASELINE_DURATION_MS, CONFIG_BASELINE_REPETITIONS,
 #if CONFIG_COMPILER_OPTIMIZATION_PERF
@@ -114,7 +118,12 @@ extern "C" void app_main() {
 #else
               0U
 #endif
-  );
+              ,
+              static_cast<unsigned>(config.max_frames_per_batch),
+              static_cast<unsigned long long>(config.max_batch_time_us),
+              static_cast<unsigned>(config.max_runnable_receive_calls),
+              static_cast<unsigned long long>(config.max_runnable_time_us),
+              static_cast<unsigned>(config.budget_pause_ms));
   runtime_baseline::print_header();
   static EspPlatform platform;
   // Runtime inline storage is larger than app_main's stack. Construct each
@@ -141,8 +150,6 @@ extern "C" void app_main() {
         auto *fixture = new (fixture_storage) runtime_baseline::Fixture{platform, scenario, timing};
         auto *runtime = new (runtime_storage)
             vehicle_telemetry::Runtime{fixture->source, fixture->processor, fixture->observer};
-        vehicle_telemetry::RuntimeConfig config{};
-        config.receive_timeout_ms = 1;
         const auto started = platform.now();
         begin_idle(started);
         baseline_trace_begin();

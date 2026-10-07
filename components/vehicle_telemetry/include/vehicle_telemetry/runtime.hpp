@@ -15,6 +15,18 @@ struct RuntimeConfig final {
   // not get rounded up to the receive poll interval.
   std::uint32_t receive_timeout_ms{100};
   vehicle_core::Microseconds transport_silence_timeout_us{1'000'000};
+  // Batch checkpoints refresh stop/silence checks; they do not block or reset
+  // the accumulated runnable budget. Time limits include one full transaction
+  // of possible overshoot: receive, processor and both observer callbacks.
+  std::uint32_t max_frames_per_batch{16};
+  vehicle_core::Microseconds max_batch_time_us{2'000};
+  // Every receive return counts, including immediate non-frame returns. The
+  // real system monotonic clock drives fairness, independently of liveness.
+  std::uint32_t max_runnable_receive_calls{512};
+  vehicle_core::Microseconds max_runnable_time_us{20'000};
+  // Positive blocking opportunity; ESP rounds up to ticks and checks stop
+  // between one-tick chunks. A tick may be 10 ms on a 100 Hz build.
+  std::uint32_t budget_pause_ms{1};
 };
 
 class Runtime final {

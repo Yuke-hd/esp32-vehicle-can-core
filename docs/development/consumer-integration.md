@@ -164,3 +164,10 @@ Review the core commit, update the host FetchContent `GIT_TAG` and/or the
 Component Manager `version`, then run both repositories' host tests. A core
 update does not authorize a protocol or vehicle-data change; those remain
 controller-repository responsibilities.
+
+
+Runtime consumers should review the [work-budget contract](runtime-work-budgets.md)
+and rebuild dependent components when adopting the appended configuration and
+diagnostic fields. The [prepared 0.2.0 release notes](../releases/runtime-budgets-0.2.0.md)
+record rollout and pinning requirements; release publication remains a separate
+step pending the reviewed merge.

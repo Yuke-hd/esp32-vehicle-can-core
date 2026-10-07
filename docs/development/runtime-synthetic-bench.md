@@ -194,3 +194,8 @@ not a production guarantee. The watchdog failures and FPU pinning provide a
 concrete unchanged-runtime baseline for #133. The generic acquisition baseline
 can also inform [controller #210](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/210)
 without establishing controller decoder, CAN driver or physical-bus behavior.
+
+
+The subsequent [#133 work-budget implementation and paired evidence](runtime-work-budgets.md)
+uses this unchanged-runtime corpus as its baseline. Its results and supported
+synthetic points are recorded separately; the observations above remain historical.
