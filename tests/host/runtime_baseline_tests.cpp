@@ -6,6 +6,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest/doctest.h"
 #include "fixture.hpp"
+#include "task_residency.hpp"
 
 namespace {
 class ManualPlatform : public runtime_baseline::Platform {
@@ -182,4 +183,31 @@ TEST_CASE("stop waits a current slow observer and processes no further frame") {
   CHECK(fixture.metrics.maximum_frames_between_waits == 1);
   CHECK(fixture.metrics.maximum_checkpoint_span_us == 410);
   CHECK(fixture.metrics.source_waits == 0);
+}
+
+TEST_CASE("task residency retains same-task reselections and closes real switches") {
+  runtime_baseline::TaskResidency trace;
+  trace.select(0, 0, 7, 12, true);
+  trace.select(0, 7, 7, 23, true);
+  trace.select(0, 7, 7, 33, true);
+  trace.select(0, 7, 8, 53, false);
+  CHECK(trace.cores[0].maximum_us == 41);
+  CHECK(trace.cores[0].segments == 1);
+  CHECK(trace.cores[0].reselections == 2);
+  CHECK_FALSE(trace.cores[0].active);
+}
+
+TEST_CASE("task residency finalizes each core once at run boundary") {
+  runtime_baseline::TaskResidency trace;
+  trace.select(0, 0, 7, 12, true);
+  trace.select(0, 7, 8, 53, false);
+  trace.select(1, 0, 7, 83, true);
+  trace.finish(200);
+  CHECK(trace.cores[0].maximum_us == 41);
+  CHECK(trace.cores[1].maximum_us == 117);
+  CHECK(trace.cores[1].segments == 1);
+  CHECK_FALSE(trace.cores[1].active);
+  trace.finish(300);
+  CHECK(trace.cores[1].segments == 1);
+  CHECK(trace.cores[1].maximum_us == 117);
 }

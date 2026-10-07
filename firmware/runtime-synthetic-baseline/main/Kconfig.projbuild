@@ -1,0 +1,49 @@
+menu "Synthetic runtime baseline"
+
+config BASELINE_DURATION_MS
+    int "Measured run duration (ms)"
+    range 250 60000
+    default 250
+    help
+        Stress measurements should exceed the configured watchdog period.
+        This setting does not alter or feed the watchdog.
+
+config BASELINE_REPETITIONS
+    int "Repetitions per timing mode"
+    range 1 10
+    default 3
+
+config BASELINE_SCENARIO
+    int "Scenario: 0 all, 1 ready, 2 mixed, 3 burst, 4 slow observer, 5 cancel wait"
+    range 0 5
+    default 0
+
+config BASELINE_ARRIVAL_BATCH
+    int "Burst/slow-observer arrivals per interval"
+    range 1 128
+    default 64
+
+config BASELINE_ARRIVAL_INTERVAL_US
+    int "Burst/slow-observer arrival interval (us)"
+    range 1 1000000
+    default 1000
+
+config BASELINE_PROCESSOR_WORK_US
+    int "Synthetic processor busy work per frame (us)"
+    range 0 1000
+    default 10
+
+config BASELINE_OBSERVER_WORK_US
+    int "Slow-observer busy work per callback (us)"
+    range 0 1000
+    default 200
+
+config BASELINE_SCHEDULER_TRACE
+    bool "Bounded task residency dispatcher instrumentation"
+    default n
+    help
+        ESP32 IDF FreeRTOS-only linker wrapper; includes interrupt/scheduler
+        overhead and must be compared against an otherwise identical build.
+        It does not change task priorities, scheduling policy or watchdogs.
+
+endmenu
