@@ -63,3 +63,16 @@ add_test(
   COMMAND ${Python3_EXECUTABLE}
           ${CMAKE_SOURCE_DIR}/tests/tools/check_architecture_test.py
 )
+
+add_executable(runtime_baseline_tests runtime_baseline_tests.cpp)
+target_include_directories(runtime_baseline_tests PRIVATE ${CMAKE_SOURCE_DIR}/tools/runtime_baseline)
+target_link_libraries(runtime_baseline_tests PRIVATE vehicle_telemetry doctest::doctest)
+doctest_discover_tests(runtime_baseline_tests)
+
+# Exploratory aggregate output is deliberately not a wall-time CI assertion.
+add_executable(runtime_synthetic_baseline ${CMAKE_SOURCE_DIR}/tools/runtime_baseline/host_main.cpp)
+target_link_libraries(runtime_synthetic_baseline PRIVATE vehicle_telemetry)
+target_compile_definitions(runtime_synthetic_baseline PRIVATE
+  BASELINE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+  BASELINE_COMPILER_VERSION="${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
+)
