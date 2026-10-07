@@ -1,5 +1,7 @@
 #include "vehicle_telemetry/runtime.hpp"
 
+#include "runtime_budget.hpp"
+
 #include <atomic>
 #include <limits>
 #include <mutex>
@@ -11,6 +13,7 @@
 #include "freertos/task.h"
 #else
 #include <chrono>
+#include <condition_variable>
 #include <thread>
 #endif
 
@@ -23,7 +26,12 @@ constexpr vehicle_core::Microseconds kMaximumSilenceTimeoutUs = 300'000'000;
 [[nodiscard]] bool valid_config(const RuntimeConfig &config) noexcept {
   return config.receive_timeout_ms != 0 && config.receive_timeout_ms <= kMaximumReceiveTimeoutMs &&
          config.transport_silence_timeout_us != 0 &&
-         config.transport_silence_timeout_us <= kMaximumSilenceTimeoutUs;
+         config.transport_silence_timeout_us <= kMaximumSilenceTimeoutUs &&
+         config.max_frames_per_batch != 0 && config.max_runnable_receive_calls <= 65'535 &&
+         config.max_frames_per_batch <= config.max_runnable_receive_calls &&
+         config.max_batch_time_us != 0 && config.max_runnable_time_us <= 1'000'000 &&
+         config.max_batch_time_us <= config.max_runnable_time_us && config.budget_pause_ms != 0 &&
+         config.budget_pause_ms <= 1'000;
 }
 
 class SystemMonotonicClock final : public vehicle_core::MonotonicClock {
@@ -140,7 +148,7 @@ public:
     }
     if (created != pdPASS) {
       worker_active_.store(false, std::memory_order_release);
-      stop_requested_.store(true, std::memory_order_release);
+      request_stop();
       const auto cleanup_result = attempt_source_stop();
       const auto final_state =
           cleanup_result.ok() ? LifecycleState::Stopped : LifecycleState::Faulted;
@@ -158,7 +166,7 @@ public:
       worker_ = std::thread(&RuntimeImplementation::run_loop, this);
     } catch (...) {
       worker_active_.store(false, std::memory_order_release);
-      stop_requested_.store(true, std::memory_order_release);
+      request_stop();
       const auto cleanup_result = attempt_source_stop();
       const auto final_state =
           cleanup_result.ok() ? LifecycleState::Stopped : LifecycleState::Faulted;
@@ -227,7 +235,7 @@ public:
       lifecycle_.store(LifecycleState::Stopping, std::memory_order_release);
     lifecycle_lock.unlock();
     set_lifecycle_diagnostic(LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped);
-    stop_requested_.store(true, std::memory_order_release);
+    request_stop();
 
     const auto source_result = attempt_source_stop();
     if (source_result.status == ResultCode::Timeout ||
@@ -387,7 +395,7 @@ private:
   }
 
   void shutdown_noexcept() noexcept {
-    stop_requested_.store(true, std::memory_order_release);
+    request_stop();
     if (source_ownership_ == SourceOwnership::SuccessfulStart)
       (void)attempt_source_stop();
     else if (source_ownership_ == SourceOwnership::PartialStart)
@@ -466,31 +474,99 @@ private:
     return diagnostics_;
   }
 
+  void request_stop() noexcept {
+#if !defined(ESP_PLATFORM)
+    // Pair the predicate update with the wait mutex to avoid a lost wakeup.
+    std::lock_guard<std::mutex> lock{budget_wait_mutex_};
+#endif
+    stop_requested_.store(true, std::memory_order_release);
+#if !defined(ESP_PLATFORM)
+    budget_wait_condition_.notify_all();
+#endif
+  }
+
+  void record_budget_pause() noexcept {
+    std::lock_guard<std::mutex> lock{diagnostics_mutex_};
+    ++diagnostics_.work_budget_pauses;
+  }
+
+  [[nodiscard]] bool budget_pause() noexcept {
+#if defined(ESP_PLATFORM)
+    if (stop_requested_.load(std::memory_order_acquire))
+      return false;
+    record_budget_pause();
+    // Positive delay removes this worker from the ready set. Yield alone does
+    // not let a lower-priority idle task run. Round up, never to zero ticks.
+    const auto ticks =
+        (static_cast<std::uint64_t>(config_.budget_pause_ms) * configTICK_RATE_HZ + 999) / 1000;
+    for (std::uint64_t remaining = ticks; remaining != 0; --remaining) {
+      if (stop_requested_.load(std::memory_order_acquire))
+        return false;
+      vTaskDelay(1);
+    }
+    return !stop_requested_.load(std::memory_order_acquire);
+#else
+    std::unique_lock<std::mutex> lock{budget_wait_mutex_};
+    if (stop_requested_.load(std::memory_order_acquire))
+      return false;
+    record_budget_pause();
+    return !budget_wait_condition_.wait_for(
+        lock, std::chrono::milliseconds(config_.budget_pause_ms),
+        [this] { return stop_requested_.load(std::memory_order_acquire); });
+#endif
+  }
+
+  void refresh_checkpoint() noexcept {
+    const auto now = clock_->now();
+    std::lock_guard<std::mutex> lock{diagnostics_mutex_};
+    update_silence_diagnostic_locked(now);
+  }
+
   void run_loop() noexcept {
+    // Injected liveness clocks can freeze or move backwards in consumers;
+    // fairness deadlines must instead use the platform's real monotonic timer.
+    detail::WorkBudget budget{config_, system_clock().now()};
     while (!stop_requested_.load(std::memory_order_acquire)) {
-      vehicle_core::RawCanFrame frame{};
-      const auto receive_status = source_->receive(frame, config_.receive_timeout_ms);
-      const auto receive_time_us = clock_->now();
+      detail::BudgetAction action{detail::BudgetAction::Continue};
+      do {
+        vehicle_core::RawCanFrame frame{};
+        const auto receive_status = source_->receive(frame, config_.receive_timeout_ms);
+        const auto receive_time_us = clock_->now();
+        if (stop_requested_.load(std::memory_order_acquire))
+          break;
+
+        if (receive_status == ReceiveStatus::Frame) {
+          const auto result = processor_->process(frame);
+          const auto snapshot =
+              snapshot_and_update(receive_status, receive_time_us, &frame, &result);
+          observer_->on_frame_processed(frame, result);
+          observer_->on_diagnostics(snapshot);
+          if (result.status == ProcessStatus::Fault) {
+            lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
+            request_stop();
+          }
+        } else {
+          const auto snapshot = snapshot_and_update(receive_status, receive_time_us);
+          observer_->on_diagnostics(snapshot);
+          if (receive_status == ReceiveStatus::Fault ||
+              receive_status == ReceiveStatus::NotStarted) {
+            lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
+            request_stop();
+          }
+        }
+        // Complete a frame's processor + both callbacks before observing stop
+        // or a budget deadline. Terminal outcomes never wait for a budget pause.
+        if (stop_requested_.load(std::memory_order_acquire))
+          break;
+        action = budget.after_receive(receive_status == ReceiveStatus::Frame, system_clock().now());
+      } while (action == detail::BudgetAction::Continue);
       if (stop_requested_.load(std::memory_order_acquire))
         break;
-
-      if (receive_status == ReceiveStatus::Frame) {
-        const auto result = processor_->process(frame);
-        const auto snapshot = snapshot_and_update(receive_status, receive_time_us, &frame, &result);
-        observer_->on_frame_processed(frame, result);
-        observer_->on_diagnostics(snapshot);
-        if (result.status == ProcessStatus::Fault) {
-          lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
-          stop_requested_.store(true, std::memory_order_release);
-        }
-        continue;
-      }
-
-      const auto snapshot = snapshot_and_update(receive_status, receive_time_us);
-      observer_->on_diagnostics(snapshot);
-      if (receive_status == ReceiveStatus::Fault || receive_status == ReceiveStatus::NotStarted) {
-        lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
-        stop_requested_.store(true, std::memory_order_release);
+      refresh_checkpoint();
+      if (action == detail::BudgetAction::Pause) {
+        if (!budget_pause())
+          break;
+        budget.after_pause(system_clock().now());
       }
     }
 #if !defined(ESP_PLATFORM)
@@ -537,6 +613,8 @@ private:
   TaskHandle_t task_{nullptr};
 #else
   std::thread worker_{};
+  std::mutex budget_wait_mutex_{};
+  std::condition_variable budget_wait_condition_{};
 #endif
 };
 

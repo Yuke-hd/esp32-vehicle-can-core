@@ -167,6 +167,10 @@ TEST_CASE("stop waits a current slow observer and processes no further frame") {
   config.observer_work_us = 200;
   runtime_baseline::Fixture fixture{platform, config};
   vehicle_telemetry::Runtime runtime{fixture.source, fixture.processor, fixture.observer};
+  vehicle_telemetry::RuntimeConfig work{};
+  work.max_frames_per_batch = work.max_runnable_receive_calls = 1;
+  work.budget_pause_ms = 1000;
+  REQUIRE(runtime.configure(work).ok());
   REQUIRE(runtime.start().ok());
   const bool in_observer = platform.await_wait();
   auto stopping = std::async(std::launch::async, [&] { return runtime.stop(); });
@@ -183,6 +187,7 @@ TEST_CASE("stop waits a current slow observer and processes no further frame") {
   CHECK(fixture.metrics.maximum_frames_between_waits == 1);
   CHECK(fixture.metrics.maximum_checkpoint_span_us == 410);
   CHECK(fixture.metrics.source_waits == 0);
+  CHECK(runtime.diagnostics().work_budget_pauses == 0);
 }
 
 TEST_CASE("task residency retains same-task reselections and closes real switches") {

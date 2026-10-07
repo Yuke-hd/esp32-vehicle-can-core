@@ -9,6 +9,7 @@
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest/doctest.h"
+#include "runtime_budget.hpp"
 #include "vehicle_telemetry/runtime.hpp"
 
 namespace {
@@ -242,6 +243,24 @@ private:
   result.data[0] = 0x42;
   return result;
 }
+
+class InfiniteSource final : public vehicle_telemetry::AcquisitionSource {
+public:
+  vehicle_telemetry::StatusResult start() noexcept override { return {}; }
+  vehicle_telemetry::StatusResult stop() noexcept override {
+    ++stops;
+    return {};
+  }
+  vehicle_telemetry::ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
+                                           std::uint32_t) noexcept override {
+    frame.identifier = ++calls;
+    return result;
+  }
+  vehicle_telemetry::AcquisitionStatistics statistics() const noexcept override { return {}; }
+  std::atomic<unsigned> calls{0};
+  std::atomic<unsigned> stops{0};
+  vehicle_telemetry::ReceiveStatus result{vehicle_telemetry::ReceiveStatus::Frame};
+};
 
 } // namespace
 
@@ -493,4 +512,163 @@ TEST_CASE("generic runtime stops a non-idempotent source once during timeout and
     CHECK(runtime.stop().status == vehicle_telemetry::ResultCode::Timeout);
   }
   CHECK(source.stop_calls() == 1);
+}
+
+TEST_CASE("runtime validates effective batch and runnable controls") {
+  FakeSource source;
+  CountingProcessor processor;
+  RecordingObserver observer;
+  vehicle_telemetry::Runtime runtime{source, processor, observer};
+  vehicle_telemetry::RuntimeConfig config{10, 2000};
+  CHECK(runtime.configure(config).ok());
+  auto invalid = config;
+  invalid.max_frames_per_batch = 0;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_batch_time_us = 0;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_runnable_receive_calls = 0;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_runnable_time_us = 0;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.budget_pause_ms = 0;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_frames_per_batch = config.max_runnable_receive_calls + 1;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_batch_time_us = config.max_runnable_time_us + 1;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_runnable_receive_calls = 65'536;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_runnable_time_us = 1'000'001;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.budget_pause_ms = 1'001;
+  CHECK(runtime.configure(invalid).status == vehicle_telemetry::ResultCode::InvalidConfiguration);
+  config.max_frames_per_batch = config.max_runnable_receive_calls = 65'535;
+  config.max_batch_time_us = config.max_runnable_time_us = 1'000'000;
+  config.budget_pause_ms = 1000;
+  CHECK(runtime.configure(config).ok());
+}
+
+TEST_CASE("infinite ready work checkpoints batches without resetting the runnable budget") {
+  const vehicle_telemetry::RuntimeConfig config{};
+  vehicle_telemetry::detail::WorkBudget budget{config, 0};
+  using Action = vehicle_telemetry::detail::BudgetAction;
+  for (unsigned burst = 0; burst < 3; ++burst) {
+    for (unsigned call = 1; call <= config.max_runnable_receive_calls; ++call) {
+      const auto expected = call == config.max_runnable_receive_calls ? Action::Pause
+                            : call % config.max_frames_per_batch == 0 ? Action::Checkpoint
+                                                                      : Action::Continue;
+      CHECK(budget.after_receive(true, 0) == expected);
+    }
+    budget.after_pause(0);
+  }
+}
+
+TEST_CASE("immediate nonframe returns cannot reset runnable work allowance") {
+  vehicle_telemetry::RuntimeConfig config{};
+  config.max_frames_per_batch = 2;
+  config.max_runnable_receive_calls = 5;
+  vehicle_telemetry::detail::WorkBudget budget{config, 100};
+  using Action = vehicle_telemetry::detail::BudgetAction;
+  CHECK(budget.after_receive(true, 100) == Action::Continue);
+  CHECK(budget.after_receive(false, 100) == Action::Checkpoint);
+  CHECK(budget.after_receive(false, 100) == Action::Checkpoint);
+  CHECK(budget.after_receive(true, 100) == Action::Continue);
+  CHECK(budget.after_receive(false, 100) == Action::Pause);
+}
+
+TEST_CASE("batch and runnable time deadlines are inclusive and independent") {
+  vehicle_telemetry::RuntimeConfig config{};
+  config.max_batch_time_us = 20;
+  config.max_runnable_time_us = 50;
+  vehicle_telemetry::detail::WorkBudget budget{config, 100};
+  using Action = vehicle_telemetry::detail::BudgetAction;
+  CHECK(budget.after_receive(true, 119) == Action::Continue);
+  CHECK(budget.after_receive(true, 120) == Action::Checkpoint);
+  CHECK(budget.after_receive(false, 149) == Action::Checkpoint);
+  CHECK(budget.after_receive(true, 150) == Action::Pause);
+  budget.after_pause(200);
+  CHECK(budget.after_receive(true, 219) == Action::Continue);
+  CHECK(budget.after_receive(true, 250) == Action::Pause);
+}
+
+TEST_CASE("backwards or frozen samples retain a finite receive-call fallback") {
+  vehicle_telemetry::RuntimeConfig config{};
+  config.max_frames_per_batch = 1;
+  config.max_runnable_receive_calls = 3;
+  vehicle_telemetry::detail::WorkBudget budget{config, 100};
+  using Action = vehicle_telemetry::detail::BudgetAction;
+  CHECK(budget.after_receive(false, 99) == Action::Checkpoint);
+  CHECK(budget.after_receive(true, 98) == Action::Checkpoint);
+  CHECK(budget.after_receive(false, 97) == Action::Pause);
+}
+
+TEST_CASE("ready frames and immediate timeouts reach a pause with frozen liveness") {
+  for (const bool frames : {false, true}) {
+    InfiniteSource source;
+    source.result = frames ? vehicle_telemetry::ReceiveStatus::Frame
+                           : vehicle_telemetry::ReceiveStatus::Timeout;
+    CountingProcessor processor;
+    RecordingObserver observer;
+    ManualClock frozen;
+    vehicle_telemetry::Runtime runtime{source, processor, observer, frozen};
+    vehicle_telemetry::RuntimeConfig config{};
+    config.max_frames_per_batch = 1;
+    config.max_runnable_receive_calls = 3;
+    config.budget_pause_ms = 1000;
+    REQUIRE(runtime.configure(config).ok());
+    REQUIRE(runtime.start().ok());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (runtime.diagnostics().work_budget_pauses == 0 &&
+           std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto paused = runtime.diagnostics().work_budget_pauses;
+    // Pause publication holds the same mutex as wait entry and stop's notifier.
+    // The broad deadline detects failed cancellation, not a throughput threshold.
+    auto stopped = std::async(std::launch::async, [&] { return runtime.stop(); });
+    const auto progress = stopped.wait_for(std::chrono::milliseconds(500));
+    const auto result = stopped.get();
+    REQUIRE(paused == 1);
+    CHECK(progress == std::future_status::ready);
+    REQUIRE(result.ok());
+    CHECK(source.calls == 3);
+    CHECK(processor.process_count == (frames ? 3 : 0));
+    CHECK(observer.frames_processed == (frames ? 3 : 0));
+    CHECK(source.stops == 1);
+    CHECK(runtime.diagnostics().work_budget_pauses == 1);
+  }
+}
+
+TEST_CASE("terminal processor or source result takes precedence over a coincident pause") {
+  for (const bool source_fault : {false, true}) {
+    InfiniteSource source;
+    CountingProcessor processor;
+    RecordingObserver observer;
+    if (source_fault)
+      source.result = vehicle_telemetry::ReceiveStatus::Fault;
+    else
+      processor.result = vehicle_telemetry::ProcessStatus::Fault;
+    vehicle_telemetry::Runtime runtime{source, processor, observer};
+    vehicle_telemetry::RuntimeConfig config{};
+    config.max_frames_per_batch = config.max_runnable_receive_calls = 1;
+    config.budget_pause_ms = 1000;
+    REQUIRE(runtime.configure(config).ok());
+    REQUIRE(runtime.start().ok());
+    const bool faulted = observer.wait_for_lifecycle(vehicle_telemetry::LifecycleState::Faulted);
+    const auto observed = observer.diagnostics();
+    REQUIRE(runtime.stop().ok());
+    REQUIRE(faulted);
+    CHECK(observed.processor_faults == (source_fault ? 0 : 1));
+    CHECK(source.calls == 1);
+    CHECK(observer.frames_processed == (source_fault ? 0 : 1));
+    CHECK(runtime.diagnostics().work_budget_pauses == 0);
+  }
 }
