@@ -1,0 +1,2 @@
+# Compile-only CI coverage of the optional scheduler wrapper.
+CONFIG_BASELINE_SCHEDULER_TRACE=y
