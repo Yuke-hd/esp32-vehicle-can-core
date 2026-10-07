@@ -1,0 +1,29 @@
+{
+  "name": "paired-ready-on",
+  "source_revision": "68778f1505951b9e1e152c9b6d8253d21a4eec22",
+  "settings": {
+    "BASELINE_DURATION_MS": "7000",
+    "BASELINE_REPETITIONS": "3",
+    "BASELINE_SCENARIO": "1",
+    "BASELINE_ARRIVAL_BATCH": "64",
+    "BASELINE_ARRIVAL_INTERVAL_US": "1000",
+    "BASELINE_PROCESSOR_WORK_US": "10",
+    "BASELINE_OBSERVER_WORK_US": "200",
+    "BASELINE_SCHEDULER_TRACE": "y"
+  },
+  "sdkconfig_sha256": "05c67cb172f209b4480b7b5217866c3d8e4dac92b47dad973f74adefc41f50e5",
+  "app_sha256": "3a035f255d4b4b66dbd10765dffdf0aee8cac9407fd5d3ec8dae5ee77583669a",
+  "idf": "v5.5.4",
+  "board": "ESP32-D0WDQ6-V3 rev3.1",
+  "isolated_usb_can_disconnected": true,
+  "capture": {
+    "aggregate_rows": 6,
+    "expected_initial_boots": 1,
+    "observed_boots": 1,
+    "serial_watchdog_timeouts": 6,
+    "unexpected_errors": 0,
+    "metadata": [
+      "metadata,esp32,idf=v5.5.4,cpu_mhz=240,tick_hz=1000,diagnostics=both_callbacks,receive_timeout_ms=1,duration_ms=7000,repeats=3,worker_priority=1,controller_priority=3,idle_hooks=both,optimization_perf=1,compiler=14.2.0,checkpoint_wall_only=1,watchdog_timeout_s=5,watchdog_panic=0"
+    ]
+  }
+}
