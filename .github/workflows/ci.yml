@@ -64,7 +64,7 @@ jobs:
       - name: Validate C++ formatting
         shell: bash
         run: |
-          mapfile -t sources < <(find components firmware tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
+          mapfile -t sources < <(find components firmware tests tools -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
           test "${#sources[@]}" -gt 0
           clang-format-14 --dry-run --Werror "${sources[@]}"
       - name: Configure host tests
@@ -123,4 +123,4 @@ jobs:
             -e CCACHE_BASEDIR=/project \
             -e IDF_CCACHE_ENABLE=1 \
             espressif/idf:v5.5.4 \
-            bash -lc 'source /opt/esp/idf/export.sh >/dev/null && python3 tools/check_toolchain.py --scope firmware && cd firmware/tcan485-bench-ack-only && idf.py set-target esp32 && idf.py build && chmod -R a+rwX /project/.cache/ccache-firmware'
+            bash -lc 'source /opt/esp/idf/export.sh >/dev/null && python3 tools/check_toolchain.py --scope firmware && cd firmware/tcan485-bench-ack-only && idf.py set-target esp32 && idf.py build && cd /project/firmware/runtime-synthetic-baseline && idf.py set-target esp32 && idf.py build && chmod -R a+rwX /project/.cache/ccache-firmware'
