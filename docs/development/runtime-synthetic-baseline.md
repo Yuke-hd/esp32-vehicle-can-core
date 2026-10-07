@@ -6,11 +6,12 @@ payloads, capture data, or production scheduling changes. The processor performs
 representative single-precision arithmetic, not a decoder. Its malformed frames
 use an intentionally invalid DLC to exercise a generic processor result.
 
-The fixtures and build checks are a baseline for #133. **Actual ESP32 fairness,
-watchdog behavior, core affinity, and a supported hardware load envelope remain
-unvalidated until a separately authorized isolated bench run.** Building the
-firmware does not supply that evidence or complete #132. No physical interaction
-is authorized by these instructions.
+The fixtures and build checks are a baseline for #133. The follow-up
+[authorized ESP32 bench evidence](runtime-synthetic-bench.md) records actual
+post-FPU core affinity, task residency, idle progress, watchdog outcomes and
+specific stable/overloaded synthetic loads. Host measurements below remain
+exploratory; building firmware alone supplies no hardware evidence. Physical
+execution requires separate authorization and an isolated board.
 
 ## Host validation and exploratory measurements
 
@@ -134,14 +135,12 @@ each run; inter-run recovery is outside it. Do not combine different settings.
 
 A nonzero idle count alone does not establish acceptable scheduling. Report
 per-core maximum gaps, actual post-FPU affinity, drops/backlog, watchdog/reset
-outcomes and the exact tested load range. Scheduler trace or equivalent bench
-instrumentation is still needed to measure actual maximum uninterrupted CPU
-execution; this fixture cannot infer it from wall spans. The supported hardware
-load envelope and actual fairness/watchdog conclusions remain pending. #133 may
-use the fixtures for before/after characterization, without treating them as
-completed hardware acceptance evidence.
+outcomes and the exact tested load range. The original fixture cannot infer
+uninterrupted CPU execution from wall spans.
 
-The follow-up [task residency and watchdog stress fixture](runtime-synthetic-bench.md)
+The follow-up [task residency and watchdog stress evidence](runtime-synthetic-bench.md)
 adds an optional dispatcher wrapper and configurable longer/load-specific runs.
-Its scheduler residency definition includes ISR overhead and is separate from
-the original source-wait wall span.
+Its measured task residency includes ISR overhead and is separate from the
+original source-wait wall span. The authorized corpus supplies an unchanged
+runtime baseline for #133, including observed overload failures; it does not
+establish a production CAN load envelope or vehicle readiness.

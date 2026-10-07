@@ -1,0 +1,48 @@
+{
+  "board": "ESP32-D0WDQ6-V3 rev3.1",
+  "idf": "v5.5.4",
+  "isolation": "USB-powered isolated bench, CAN-H and CAN-L disconnected",
+  "compiler": "Xtensa GCC 14.2.0",
+  "critical_sdkconfig": {
+    "CONFIG_COMPILER_OPTIMIZATION_PERF": "y",
+    "CONFIG_PM_ENABLE": "n",
+    "CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ": "240",
+    "CONFIG_ESP_INT_WDT": "y",
+    "CONFIG_ESP_INT_WDT_TIMEOUT_MS": "300",
+    "CONFIG_ESP_TASK_WDT_EN": "y",
+    "CONFIG_ESP_TASK_WDT_INIT": "y",
+    "CONFIG_ESP_TASK_WDT_PANIC": "n",
+    "CONFIG_ESP_TASK_WDT_TIMEOUT_S": "5",
+    "CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0": "y",
+    "CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1": "y",
+    "CONFIG_FREERTOS_SMP": "n",
+    "CONFIG_FREERTOS_UNICORE": "n",
+    "CONFIG_FREERTOS_HZ": "1000",
+    "CONFIG_FREERTOS_MAX_TASK_NAME_LEN": "16",
+    "CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH": "n",
+    "CONFIG_FREERTOS_IN_IRAM": "y"
+  },
+  "runtime_receive_timeout_ms": 1,
+  "runtime_worker_priority": 1,
+  "runtime_worker_stack_bytes": 4096,
+  "measurement_controller_priority": 3,
+  "diagnostics": "Both callbacks enabled; frame callback for every completed processor result, diagnostics also on timeouts.",
+  "queue_capacity": 128,
+  "duration_ms": 7000,
+  "repetitions_per_timing_mode": 3,
+  "timing_modes": [
+    0,
+    1
+  ],
+  "source_revision_equivalence": {
+    "2827d72cb039ebd8f11011b01ebd82fe9a637200": "trace/stress firmware implementation",
+    "5e9a4df359482c9c9b3704cf464e60717a81e0c8": "same firmware code; CI-only coverage commit"
+  },
+  "no_can_driver": true,
+  "privacy": "Synthetic aggregate counts and durations only; no raw serial logs, captures, identifiers, location or trip data.",
+  "measured_date_utc": "2026-10-07",
+  "experiments": 14,
+  "aggregate_rows": 84,
+  "variance_groups": 28,
+  "inter_run_recovery_ms": 100
+}
