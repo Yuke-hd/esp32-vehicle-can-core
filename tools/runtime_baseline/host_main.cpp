@@ -38,7 +38,7 @@ private:
 int main() {
   std::printf("metadata,host,compiler=%s,diagnostics=both_callbacks,receive_timeout_ms=1,"
               "duration_ms=250,repeats=3,build_type=%s,wall_timing_only=1\n",
-              __VERSION__, BASELINE_BUILD_TYPE);
+              BASELINE_COMPILER_VERSION, BASELINE_BUILD_TYPE);
   runtime_baseline::print_header();
   for (const auto &scenario : runtime_baseline::scenarios) {
     for (bool timing : {false, true}) {
