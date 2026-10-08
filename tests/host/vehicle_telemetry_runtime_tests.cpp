@@ -77,6 +77,7 @@ public:
   }
 
   [[nodiscard]] vehicle_telemetry::AcquisitionStatistics statistics() const noexcept override {
+    statistics_calls_.fetch_add(1, std::memory_order_relaxed);
     if (statistics_blocked_.load(std::memory_order_acquire)) {
       statistics_entered_.store(true, std::memory_order_release);
       while (statistics_blocked_.load(std::memory_order_acquire))
@@ -84,6 +85,10 @@ public:
     }
     std::lock_guard<std::mutex> lock{mutex_};
     return statistics_;
+  }
+
+  [[nodiscard]] std::uint64_t statistics_calls() const noexcept {
+    return statistics_calls_.load(std::memory_order_relaxed);
   }
 
   bool inject(const vehicle_core::RawCanFrame &frame) noexcept {
@@ -143,6 +148,7 @@ private:
   bool started_{false};
   bool stop_requested_{false};
   bool faulted_{false};
+  mutable std::atomic<std::uint64_t> statistics_calls_{0};
   mutable std::atomic<bool> statistics_blocked_{false};
   mutable std::atomic<bool> statistics_entered_{false};
 };
@@ -222,6 +228,15 @@ public:
     });
   }
 
+  bool wait_for_frame_diagnostic_count(const std::uint32_t expected) {
+    std::unique_lock<std::mutex> lock{mutex};
+    return condition.wait_for(lock, std::chrono::seconds(2), [this, expected] {
+      return last.frames_processed + last.frames_ignored + last.frames_malformed +
+                 last.processor_faults >=
+             expected;
+    });
+  }
+
   [[nodiscard]] vehicle_telemetry::TransportDiagnostics diagnostics() const {
     std::lock_guard<std::mutex> lock{mutex};
     return last;
@@ -283,6 +298,191 @@ TEST_CASE("generic runtime accepts an injected fake processor and source") {
   CHECK(observer.diagnostics().last_frame_us == 42);
   CHECK(runtime.stop().ok());
   CHECK(source.stop_calls() == 1);
+}
+
+TEST_CASE("generic runtime refreshes acquisition statistics every second and preserves immediate "
+          "diagnostics") {
+  FakeSource source;
+  CountingProcessor processor;
+  RecordingObserver observer;
+  ManualClock clock;
+  clock.set(10'000);
+  vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
+
+  REQUIRE(runtime.configure({60'000, 1'000'000}).ok());
+  REQUIRE(runtime.start().ok());
+  CHECK(source.statistics_calls() == 1);
+
+  REQUIRE(source.inject(frame(1)));
+  REQUIRE(observer.wait_for_frame(1));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(1));
+  CHECK(observer.diagnostics().frames_processed == 1);
+  CHECK(observer.diagnostics().transport == vehicle_core::TransportHealth::Live);
+  CHECK(observer.diagnostics().last_frame_us == 10'000);
+  CHECK(observer.diagnostics().acquisition.frames_received == 0);
+  CHECK(source.statistics_calls() == 1);
+
+  processor.result = vehicle_telemetry::ProcessStatus::Ignored;
+  clock.set(1'009'999);
+  constexpr std::uint32_t kCachedFrames = 50;
+  for (std::uint32_t index = 0; index < kCachedFrames; ++index) {
+    const auto expected_frame_count = index + 2;
+    REQUIRE(source.inject(frame(expected_frame_count)));
+    REQUIRE(observer.wait_for_frame(expected_frame_count));
+    REQUIRE(observer.wait_for_frame_diagnostic_count(expected_frame_count));
+  }
+  CHECK(observer.diagnostics().frames_processed == 1);
+  CHECK(observer.diagnostics().frames_ignored == kCachedFrames);
+  CHECK(observer.diagnostics().last_frame_us == 1'009'999);
+  CHECK(observer.diagnostics().acquisition.frames_received == 0);
+  CHECK(source.statistics_calls() == 1);
+
+  processor.result = vehicle_telemetry::ProcessStatus::Malformed;
+  clock.set(1'010'000);
+  const auto boundary_frame_count = kCachedFrames + 2;
+  REQUIRE(source.inject(frame(boundary_frame_count)));
+  REQUIRE(observer.wait_for_frame(boundary_frame_count));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(boundary_frame_count));
+  CHECK(observer.diagnostics().frames_malformed == 1);
+  CHECK(observer.diagnostics().last_frame_us == 1'010'000);
+  CHECK(observer.diagnostics().acquisition.frames_received == boundary_frame_count);
+  CHECK(source.statistics_calls() == 2);
+
+  processor.result = vehicle_telemetry::ProcessStatus::Processed;
+  const auto cached_frame_count = boundary_frame_count + 1;
+  REQUIRE(source.inject(frame(cached_frame_count)));
+  REQUIRE(observer.wait_for_frame(cached_frame_count));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(cached_frame_count));
+  CHECK(observer.diagnostics().frames_processed == 2);
+  CHECK(observer.diagnostics().acquisition.frames_received == boundary_frame_count);
+  CHECK(source.statistics_calls() == 2);
+
+  REQUIRE(runtime.stop().ok());
+  CHECK(source.statistics_calls() == 4);
+  CHECK(runtime.diagnostics().acquisition.frames_received == cached_frame_count);
+}
+
+TEST_CASE("generic runtime handles equal and backwards acquisition clock samples safely") {
+  FakeSource source;
+  CountingProcessor processor;
+  RecordingObserver observer;
+  ManualClock clock;
+  clock.set(50'000);
+  vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
+
+  REQUIRE(runtime.configure({60'000, 1'000'000}).ok());
+  REQUIRE(runtime.start().ok());
+  CHECK(source.statistics_calls() == 1);
+
+  REQUIRE(source.inject(frame(1)));
+  REQUIRE(observer.wait_for_frame(1));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(1));
+  clock.set(50'000);
+  REQUIRE(source.inject(frame(2)));
+  REQUIRE(observer.wait_for_frame(2));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(2));
+  clock.set(49'999);
+  REQUIRE(source.inject(frame(3)));
+  REQUIRE(observer.wait_for_frame(3));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(3));
+  CHECK(source.statistics_calls() == 1);
+
+  clock.set(1'049'999);
+  REQUIRE(source.inject(frame(4)));
+  REQUIRE(observer.wait_for_frame(4));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(4));
+  CHECK(source.statistics_calls() == 1);
+
+  clock.set(1'050'000);
+  REQUIRE(source.inject(frame(5)));
+  REQUIRE(observer.wait_for_frame(5));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(5));
+  CHECK(source.statistics_calls() == 2);
+  CHECK(observer.diagnostics().acquisition.frames_received == 5);
+  CHECK(runtime.stop().ok());
+}
+
+TEST_CASE("generic runtime forces fresh acquisition snapshots at fault boundaries") {
+  SUBCASE("source failure") {
+    FakeSource source;
+    CountingProcessor processor;
+    RecordingObserver observer;
+    ManualClock clock;
+    clock.set(1'000);
+    vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
+
+    REQUIRE(runtime.configure({60'000, 1'000'000}).ok());
+    REQUIRE(runtime.start().ok());
+    REQUIRE(source.inject(frame(1)));
+    REQUIRE(observer.wait_for_frame(1));
+    REQUIRE(observer.wait_for_frame_diagnostic_count(1));
+    CHECK(source.statistics_calls() == 1);
+    CHECK(observer.diagnostics().acquisition.frames_received == 0);
+
+    source.fail();
+    REQUIRE(observer.wait_for_lifecycle(vehicle_telemetry::LifecycleState::Faulted));
+    CHECK(source.statistics_calls() == 2);
+    CHECK(observer.diagnostics().acquisition.frames_received == 1);
+    CHECK(runtime.stop().ok());
+    CHECK(source.statistics_calls() == 4);
+  }
+
+  SUBCASE("processor failure") {
+    FakeSource source;
+    CountingProcessor processor;
+    processor.result = vehicle_telemetry::ProcessStatus::Fault;
+    RecordingObserver observer;
+    ManualClock clock;
+    clock.set(1'000);
+    vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
+
+    REQUIRE(runtime.configure({60'000, 1'000'000}).ok());
+    REQUIRE(runtime.start().ok());
+    REQUIRE(source.inject(frame(1)));
+    REQUIRE(observer.wait_for_frame(1));
+    REQUIRE(observer.wait_for_lifecycle(vehicle_telemetry::LifecycleState::Faulted));
+    CHECK(observer.diagnostics().processor_faults == 1);
+    CHECK(observer.diagnostics().acquisition.frames_received == 1);
+    CHECK(source.statistics_calls() == 2);
+    CHECK(runtime.stop().ok());
+    CHECK(source.statistics_calls() == 4);
+  }
+}
+
+TEST_CASE("generic runtime resets acquisition statistics refresh timing on restart") {
+  FakeSource source;
+  CountingProcessor processor;
+  RecordingObserver observer;
+  ManualClock clock;
+  clock.set(400'000);
+  vehicle_telemetry::Runtime runtime{source, processor, observer, clock};
+
+  REQUIRE(runtime.configure({60'000, 1'000'000}).ok());
+  REQUIRE(runtime.start().ok());
+  CHECK(source.statistics_calls() == 1);
+  REQUIRE(runtime.stop().ok());
+  CHECK(source.statistics_calls() == 3);
+
+  clock.set(0);
+  REQUIRE(runtime.start().ok());
+  CHECK(source.statistics_calls() == 4);
+  REQUIRE(source.inject(frame(1)));
+  REQUIRE(observer.wait_for_frame(1));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(1));
+  CHECK(source.statistics_calls() == 4);
+
+  clock.set(999'999);
+  REQUIRE(source.inject(frame(2)));
+  REQUIRE(observer.wait_for_frame(2));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(2));
+  CHECK(source.statistics_calls() == 4);
+
+  clock.set(1'000'000);
+  REQUIRE(source.inject(frame(3)));
+  REQUIRE(observer.wait_for_frame(3));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(3));
+  CHECK(source.statistics_calls() == 5);
+  CHECK(runtime.stop().ok());
 }
 
 TEST_CASE("generic runtime serializes lifecycle and source ownership") {

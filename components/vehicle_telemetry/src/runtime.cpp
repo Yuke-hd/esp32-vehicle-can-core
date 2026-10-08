@@ -22,6 +22,7 @@ namespace {
 
 constexpr std::uint32_t kMaximumReceiveTimeoutMs = 60'000;
 constexpr vehicle_core::Microseconds kMaximumSilenceTimeoutUs = 300'000'000;
+constexpr vehicle_core::Microseconds kAcquisitionStatisticsRefreshIntervalUs = 1'000'000;
 
 [[nodiscard]] bool valid_config(const RuntimeConfig &config) noexcept {
   return config.receive_timeout_ms != 0 && config.receive_timeout_ms <= kMaximumReceiveTimeoutMs &&
@@ -86,6 +87,7 @@ public:
     lifecycle_operation_active_ = true;
     lifecycle_lock.unlock();
 
+    reset_acquisition_statistics_cache_state();
     processor_->reset();
     source_stop_retry_supported_ = source_->supports_stop_retry();
     const auto source_result = source_->start();
@@ -110,6 +112,7 @@ public:
       if (cleanup_result.ok()) {
         lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
         set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+        reset_acquisition_statistics_cache_state();
       } else {
         lifecycle_.store(LifecycleState::Faulted, std::memory_order_release);
         set_lifecycle_diagnostic(LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted);
@@ -126,13 +129,13 @@ public:
 
     stop_requested_.store(false, std::memory_order_release);
     worker_active_.store(true, std::memory_order_release);
-    const auto acquisition_statistics = source_->statistics();
+    refresh_acquisition_statistics_if_due(clock_->now(), true);
     {
       std::lock_guard<std::mutex> diagnostics_lock{diagnostics_mutex_};
       diagnostics_ = TransportDiagnostics{};
       diagnostics_.lifecycle = LifecycleState::Running;
       diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
-      diagnostics_.acquisition = acquisition_statistics;
+      diagnostics_.acquisition = acquisition_statistics_cache_;
     }
     lifecycle_.store(LifecycleState::Running, std::memory_order_release);
 
@@ -156,6 +159,8 @@ public:
       set_lifecycle_diagnostic(final_state, cleanup_result.ok()
                                                 ? vehicle_core::TransportHealth::Stopped
                                                 : vehicle_core::TransportHealth::Faulted);
+      if (cleanup_result.ok())
+        reset_acquisition_statistics_cache_state();
       lifecycle_lock.lock();
       lifecycle_operation_active_ = false;
       lifecycle_lock.unlock();
@@ -174,6 +179,8 @@ public:
       set_lifecycle_diagnostic(final_state, cleanup_result.ok()
                                                 ? vehicle_core::TransportHealth::Stopped
                                                 : vehicle_core::TransportHealth::Faulted);
+      if (cleanup_result.ok())
+        reset_acquisition_statistics_cache_state();
       lifecycle_lock.lock();
       lifecycle_operation_active_ = false;
       lifecycle_lock.unlock();
@@ -214,6 +221,7 @@ public:
       if (cleanup_result.ok()) {
         lifecycle_.store(LifecycleState::Stopped, std::memory_order_release);
         set_lifecycle_diagnostic(LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped);
+        reset_acquisition_statistics_cache_state();
         lifecycle_lock.lock();
         lifecycle_operation_active_ = false;
         lifecycle_lock.unlock();
@@ -270,6 +278,7 @@ public:
                                                     : vehicle_core::TransportHealth::Faulted;
     lifecycle_.store(final_state, std::memory_order_release);
     set_lifecycle_diagnostic(final_state, final_transport);
+    reset_acquisition_statistics_cache_state();
     lifecycle_lock.lock();
     lifecycle_operation_active_ = false;
     lifecycle_lock.unlock();
@@ -318,11 +327,43 @@ private:
 
   void set_lifecycle_diagnostic(const LifecycleState lifecycle,
                                 const vehicle_core::TransportHealth transport) noexcept {
-    const auto acquisition_statistics = source_->statistics();
+    refresh_acquisition_statistics_if_due(clock_->now(), true);
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
     diagnostics_.lifecycle = lifecycle;
     diagnostics_.transport = transport;
-    diagnostics_.acquisition = acquisition_statistics;
+    diagnostics_.acquisition = acquisition_statistics_cache_;
+  }
+
+  void reset_acquisition_statistics_cache_state() noexcept {
+    std::lock_guard<std::mutex> lock{diagnostics_mutex_};
+    acquisition_statistics_cache_valid_ = false;
+    acquisition_statistics_sample_us_ = 0;
+  }
+
+  [[nodiscard]] bool acquisition_statistics_refresh_due_locked(
+      const vehicle_core::MonotonicTimestamp now) const noexcept {
+    return !acquisition_statistics_cache_valid_ ||
+           (now >= acquisition_statistics_sample_us_ &&
+            now - acquisition_statistics_sample_us_ >= kAcquisitionStatisticsRefreshIntervalUs);
+  }
+
+  void refresh_acquisition_statistics_if_due(const vehicle_core::MonotonicTimestamp now,
+                                             const bool force = false) noexcept {
+    // Source statistics may block while an acquisition task is stopping or
+    // reconciling a fault. Serialize source calls, but do not hold the
+    // diagnostics mutex across the call so readers retain the last snapshot.
+    std::lock_guard<std::mutex> refresh_lock{acquisition_statistics_refresh_mutex_};
+    {
+      std::lock_guard<std::mutex> diagnostics_lock{diagnostics_mutex_};
+      if (!force && !acquisition_statistics_refresh_due_locked(now))
+        return;
+    }
+
+    const auto acquisition_statistics = source_->statistics();
+    std::lock_guard<std::mutex> diagnostics_lock{diagnostics_mutex_};
+    acquisition_statistics_cache_ = acquisition_statistics;
+    acquisition_statistics_sample_us_ = now;
+    acquisition_statistics_cache_valid_ = true;
   }
 
   void update_silence_diagnostic_locked(const vehicle_core::MonotonicTimestamp now) const noexcept {
@@ -427,10 +468,16 @@ private:
                       const vehicle_core::MonotonicTimestamp receive_time_us,
                       const vehicle_core::RawCanFrame *frame = nullptr,
                       const ProcessResult *result = nullptr) noexcept {
-    const auto acquisition_statistics = source_->statistics();
     const auto timeout_now = status == ReceiveStatus::Timeout ? clock_->now() : 0;
+    const auto acquisition_statistics_now =
+        status == ReceiveStatus::Timeout ? timeout_now : receive_time_us;
+    const bool processor_fault = status == ReceiveStatus::Frame && result != nullptr &&
+                                 result->status == ProcessStatus::Fault;
+    const bool force_acquisition_statistics =
+        status == ReceiveStatus::Fault || status == ReceiveStatus::NotStarted || processor_fault;
+    refresh_acquisition_statistics_if_due(acquisition_statistics_now, force_acquisition_statistics);
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
-    diagnostics_.acquisition = acquisition_statistics;
+    diagnostics_.acquisition = acquisition_statistics_cache_;
     if (status == ReceiveStatus::Frame && frame != nullptr) {
       diagnostics_.transport = vehicle_core::TransportHealth::Live;
       diagnostics_.has_last_frame = true;
@@ -596,9 +643,13 @@ private:
   const vehicle_core::MonotonicClock *clock_;
   mutable std::mutex lifecycle_mutex_{};
   mutable std::mutex diagnostics_mutex_{};
+  mutable std::mutex acquisition_statistics_refresh_mutex_{};
   bool lifecycle_operation_active_{false};
   RuntimeConfig config_{};
   mutable TransportDiagnostics diagnostics_{};
+  AcquisitionStatistics acquisition_statistics_cache_{};
+  vehicle_core::MonotonicTimestamp acquisition_statistics_sample_us_{0};
+  bool acquisition_statistics_cache_valid_{false};
   std::atomic<LifecycleState> lifecycle_{LifecycleState::Stopped};
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> worker_active_{false};
