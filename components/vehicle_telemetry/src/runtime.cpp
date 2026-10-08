@@ -348,7 +348,7 @@ private:
   }
 
   void refresh_acquisition_statistics_if_due(const vehicle_core::MonotonicTimestamp now,
-                                            const bool force = false) noexcept {
+                                             const bool force = false) noexcept {
     // Source statistics may block while an acquisition task is stopping or
     // reconciling a fault. Serialize source calls, but do not hold the
     // diagnostics mutex across the call so readers retain the last snapshot.
@@ -473,11 +473,9 @@ private:
         status == ReceiveStatus::Timeout ? timeout_now : receive_time_us;
     const bool processor_fault = status == ReceiveStatus::Frame && result != nullptr &&
                                  result->status == ProcessStatus::Fault;
-    const bool force_acquisition_statistics = status == ReceiveStatus::Fault ||
-                                              status == ReceiveStatus::NotStarted ||
-                                              processor_fault;
-    refresh_acquisition_statistics_if_due(acquisition_statistics_now,
-                                          force_acquisition_statistics);
+    const bool force_acquisition_statistics =
+        status == ReceiveStatus::Fault || status == ReceiveStatus::NotStarted || processor_fault;
+    refresh_acquisition_statistics_if_due(acquisition_statistics_now, force_acquisition_statistics);
     std::lock_guard<std::mutex> lock{diagnostics_mutex_};
     diagnostics_.acquisition = acquisition_statistics_cache_;
     if (status == ReceiveStatus::Frame && frame != nullptr) {

@@ -300,8 +300,8 @@ TEST_CASE("generic runtime accepts an injected fake processor and source") {
   CHECK(source.stop_calls() == 1);
 }
 
-TEST_CASE(
-    "generic runtime refreshes acquisition statistics every second and preserves immediate diagnostics") {
+TEST_CASE("generic runtime refreshes acquisition statistics every second and preserves immediate "
+          "diagnostics") {
   FakeSource source;
   CountingProcessor processor;
   RecordingObserver observer;
