@@ -1,4 +1,4 @@
-# MCAN-13 isolated T-CAN485 BENCH_ACK_ONLY
+# Isolated bench firmware (T-CAN485, ACK-only)
 
 ## Purpose and hard boundary
 

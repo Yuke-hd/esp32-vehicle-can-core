@@ -1,4 +1,4 @@
-# S2-C architecture contract checks
+# Architecture contract checks
 
 The host gate consolidates architecture validation without making unfinished
 hardware work a prerequisite. It is registered once as the

@@ -1,4 +1,4 @@
-# Synthetic task residency and watchdog stress (#132)
+# Synthetic task residency and watchdog stress
 
 This extends the [runtime baseline](runtime-synthetic-baseline.md) with an
 optional ESP32 scheduler measurement and configurable stress duration/load.
@@ -196,6 +196,6 @@ can also inform [controller #210](https://github.com/Yuke-hd/mazda-can-accessory
 without establishing controller decoder, CAN driver or physical-bus behavior.
 
 
-The subsequent [#133 work-budget implementation and paired evidence](runtime-work-budgets.md)
+The subsequent [#133 work-budget implementation and paired evidence](../design/runtime-work-budgets.md)
 uses this unchanged-runtime corpus as its baseline. Its results and supported
 synthetic points are recorded separately; the observations above remain historical.

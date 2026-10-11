@@ -1,4 +1,4 @@
-# Supported host builds
+# Host build
 
 Stage 0-B keeps the host build reproducible across the supported CMake floor
 and a modern CMake release. The supported minimum is CMake `3.20`; CI tests
@@ -61,10 +61,10 @@ blanket test exclusion when reproducing a failure: fix the reported test or
 record the specific unsupported platform/toolchain instead.
 
 The retained firmware build is separately pinned to ESP-IDF `v5.5.4`; see the
-[MCAN-3 scaffold](mcan-3-scaffold.md) for the isolated T-CAN485 bench
+[bench firmware guide](bench-firmware.md) for the isolated T-CAN485 bench
 commands. Make/model controller firmware is built and released from its
 downstream controller repository.
 
-The additive [synthetic runtime baseline](runtime-synthetic-baseline.md) has a
+The additive [synthetic runtime baseline](../performance/runtime-synthetic-baseline.md) has a
 host aggregate runner and a separate ESP32 software-only build target. Its
 hardware measurements remain pending separate bench authorization.

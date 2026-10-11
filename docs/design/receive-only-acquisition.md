@@ -1,4 +1,4 @@
-# MCAN-7 receive-only acquisition
+# Receive-only acquisition
 
 The source repository owns the shared receive-only `can_bus` component, its
 generic `vehicle_telemetry::CanBusSource` binding, and the isolated bench

@@ -1,155 +1,110 @@
 # ESP32 Vehicle CAN Core
 
-ESP32/ESP-IDF components for vehicle CAN acquisition and telemetry with portable host builds and tests. 
+Reusable ESP-IDF building blocks for reading a vehicle's CAN bus on an ESP32
+and turning raw frames into telemetry, without tying you to any particular
+car.
 
-This repository is a reusable foundation for downstream vehicle projects. It
-does not include make/model decoding, product publication, lighting policy,
-board products, DBC files, or vehicle captures. Those belong in the consuming
-controller repository.
+> **Receive-only by design.** The vehicle-facing code listens to the bus and
+> never transmits. Don't use this project for safety-critical decisions or as a
+> replacement for a factory instrument cluster.
 
-## Contents
+## What it does
 
-- [About the project](#about-the-project)
-- [Components](#components)
-- [Getting started](#getting-started)
-  - [Host build and tests](#host-build-and-tests)
-  - [Isolated bench firmware](#isolated-bench-firmware)
-- [Usage](#usage)
-  - [ESP-IDF consumer](#esp-idf-consumer)
-- [Safety boundary](#safety-boundary)
-- [Contributing](#contributing)
-- [License and third-party notices](#license-and-third-party-notices)
+You bring the vehicle knowledge. This repo provides everything else:
 
-## About the project
+```text
+  CAN bus ──► can_bus ──► vehicle_telemetry ──► your decoder ──► your outputs
+             (receive)    (runtime loop)        (make/model)     (display, logging, ...)
+                  └──────── all built on vehicle_core types ────────┘
+```
 
-The project separates portable CAN and telemetry contracts from ESP-IDF
-transport code. ESP-IDF controller projects can add the components they need
-through the Component Manager.
+| This repo provides | Your project provides |
+| --- | --- |
+| Receive-only CAN driver for the ESP32 | Make/model decoding and signal definitions (DBC, IDs) |
+| A runtime that moves frames from the bus to your code | What to do with decoded values: displays, logging, lighting |
+| Shared types for frames, signals, readings, and health | Board support and the firmware app |
+| Host builds and tests that run without hardware | Vehicle captures and protocol evidence |
 
 ## Components
 
-| Component | Purpose |
+Add only the components you need:
+
+| Component | Use it when you want to... |
 | --- | --- |
-| `vehicle_core` | Portable frame, time, signal, reading, notification, health, and decoder-contract types. It has no ESP-IDF, RTOS, transport, or make/model dependency. |
-| `vehicle_telemetry` | Generic runtime that composes injected acquisition, frame-processing, and observer strategies, and owns lifecycle and transport diagnostics. |
-| `can_bus` | ESP-IDF/TWAI receive-only transport with bounded buffering and diagnostics. |
-| `bench_can_ack` | Isolated adapter for acknowledging compliant classic-CAN frames on a protected bench. It is not a vehicle transport. |
+| [`vehicle_core`](components/vehicle_core) | Share frame, signal, and reading types. Plain C++17 with no ESP-IDF dependency, so it also builds on your PC. **Always required.** |
+| [`can_bus`](components/can_bus) | Receive CAN frames on an ESP32 (TWAI). |
+| [`vehicle_telemetry`](components/vehicle_telemetry) | Use a ready-made loop that reads frames, hands them to your decoder, and notifies your observers. Requires `can_bus`. |
+| [`bench_can_ack`](components/bench_can_ack) | Test on an isolated bench only. **Never connect it to a vehicle.** |
 
-## Getting started
+## Quick start: use it in your project
 
-The host build uses CMake and Ninja and requires a C++17 compiler. The
-repository's host toolchain check also requires Bash, Git, Python 3.8 or newer,
-`clang-format-14`, and ripgrep. Run the check before configuring:
-
-```sh
-python3 tools/check_toolchain.py --scope host
-```
-
-### Host build and tests
-
-From the repository root:
-
-```sh
-cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build/host --parallel
-ctest --test-dir build/host --output-on-failure
-```
-
-On a clean build, CMake downloads the pinned doctest dependency during
-configuration, so network access is needed unless that source is already in
-the CMake FetchContent cache. See [supported host builds](docs/development/supported-build.md)
-for the supported CMake versions and optional sanitizer build.
-
-### Isolated bench firmware
-
-The separate `tcan485-bench-ack-only` project requires ESP-IDF v5.5.4 and its
-ESP32 toolchain. Activate the ESP-IDF environment, then run:
-
-```sh
-python3 tools/check_toolchain.py --scope firmware
-cd firmware/tcan485-bench-ack-only
-idf.py set-target esp32
-idf.py build
-```
-
-This firmware uses TWAI normal mode only to acknowledge compliant classic-CAN
-frames on an isolated, protected bench. It must never be connected to a
-vehicle. See the [bench target instructions](docs/development/mcan-13-bench-ack-only.md)
-for the physical isolation requirements.
-
-## Usage
-
-In an ESP-IDF downstream controller project, add the core components you need
-through the Component Manager and pin them to a reviewed commit. The example
-below declares `vehicle_core` and shows how to add optional runtime and
-transport components. See the
-[consumer integration guide](docs/development/consumer-integration.md) for
-dependency direction, updates, and ownership.
-
-The consuming controller owns its make/model decoder, signal definitions,
-publication contracts, board support, and firmware. This core keeps those
-project-specific behaviors outside its generic components.
-
-### ESP-IDF consumer
-
-In the downstream project's `main/idf_component.yml` (or the manifest for the
-component that uses the core), declare `vehicle_core` as a Git dependency.
-Replace the placeholder with a reviewed full commit SHA:
+Add the components to your ESP-IDF project's `main/idf_component.yml`. Pin
+every entry to the same commit SHA:
 
 ```yaml
 dependencies:
   vehicle_core:
     git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
     path: components/vehicle_core
-    version: "<reviewed-core-commit>"
-```
-
-If the controller uses `vehicle_telemetry`, also declare `can_bus`: the runtime
-requires it for its ESP-IDF TWAI adapter. The `can_bus` component can also be
-used without `vehicle_telemetry`. Add the needed entries as siblings of
-`vehicle_core` under the same `dependencies:` key, using the same reviewed
-commit for each:
-
-```yaml
-  vehicle_telemetry:
-    git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
-    path: components/vehicle_telemetry
-    version: "<reviewed-core-commit>"
+    version: "<commit-sha>"
   can_bus:
     git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
     path: components/can_bus
-    version: "<reviewed-core-commit>"
+    version: "<commit-sha>"
+  # Optional: the runtime loop
+  vehicle_telemetry:
+    git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
+    path: components/vehicle_telemetry
+    version: "<commit-sha>"
 ```
 
-Declare only the components the controller uses. The runtime accepts injected
-acquisition, processing, and observer strategies; the controller implements
-its own vehicle-specific behavior.
+Next, follow the [consumer integration guide](docs/guides/consumer-integration.md).
+It covers a minimal receive-and-print app, host CMake (FetchContent) setup, and
+updating the pinned commit.
 
-## Safety boundary
+## Quick start: build and test this repo
 
-- Shared CAN acquisition is receive-only and exposes no business-level
-  transmit API.
-- Active CAN acknowledgement is limited to the explicitly named isolated
-  bench target.
-- The bench target must remain disconnected from any vehicle harness.
-- This project is not a replacement for a factory instrument cluster and
-  must not be used for safety-critical decisions.
-- Wiring, termination, power, and fail-silent behavior require appropriate
-  bench validation.
+You need CMake, Ninja, and a C++17 compiler. You don't need any hardware.
 
-See [receive-only acquisition](docs/development/mcan-7-listen-only-acquisition.md)
-for transport behavior and [license and vehicle-data policy](docs/policies/license-and-vehicle-data.md)
-for restrictions on captures and other vehicle data.
+```sh
+python3 tools/check_toolchain.py --scope host   # check your toolchain
+cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/host --parallel
+ctest --test-dir build/host --output-on-failure
+```
+
+For supported versions and sanitizer builds, see
+[host build guide](docs/guides/host-build.md). To build the
+ESP32 bench firmware under [`firmware/`](firmware), you also need
+ESP-IDF v5.5.4. See [bench firmware](docs/guides/bench-firmware.md).
+
+## Safety
+
+- The vehicle-facing transport is **receive-only** and has no transmit API.
+- Only the isolated bench firmware ever acknowledges frames, and it must stay
+  disconnected from any vehicle harness.
+- Validate wiring, termination, and power on a bench before connecting to a
+  vehicle.
+
+Details: [receive-only acquisition](docs/design/receive-only-acquisition.md).
+
+## Documentation
+
+| Topic | Doc |
+| --- | --- |
+| Integrating into your project | [Consumer integration](docs/guides/consumer-integration.md) |
+| How the components fit together | [Module boundaries](docs/design/module-boundaries.md) |
+| Runtime tuning and work budgets | [Runtime work budgets](docs/design/runtime-work-budgets.md) |
+| Vehicle data and capture rules | [License and vehicle-data policy](docs/policies/license-and-vehicle-data.md) |
+
+See the [documentation index](docs/README.md) for everything else.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow, safety
-requirements, and vehicle-data rules. In particular, raw vehicle captures,
-VINs, credentials, precise locations, and non-anonymized trip data must not be
-committed or attached to public project artifacts.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Don't commit raw vehicle captures,
+VINs, credentials, precise locations, or non-anonymized trip data.
 
-## License and third-party notices
+## License
 
-Project-authored source, documentation, tests, and tooling are licensed under
-the [Apache License 2.0](LICENSE). Third-party dependencies and their licenses
-are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[Apache License 2.0](LICENSE). Third-party notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
