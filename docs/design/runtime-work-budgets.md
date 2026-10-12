@@ -1,4 +1,4 @@
-# Runtime work budgets (#133)
+# Runtime work budgets
 
 The worker owns processing and delivers each completed processor result to the
 frame observer, then the diagnostic observer. `RuntimeConfig` now bounds work
@@ -93,7 +93,7 @@ observer transaction without processing another frame. Negative mutations of
 the exact call boundary, total-budget predicate and host wakeup are detected.
 Host fairness is not used as evidence of ESP idle progress.
 
-The [#132 baseline](runtime-synthetic-bench.md) remains an unchanged-runtime
+The [#132 baseline](../performance/runtime-synthetic-bench.md) remains an unchanged-runtime
 reference. Its `max_checkpoint_wall_span_us` observes **source wait requests**,
 not Runtime budget pauses. A ready source can therefore still report a whole-run
 wall span after this change while dispatcher-measured worker residency is

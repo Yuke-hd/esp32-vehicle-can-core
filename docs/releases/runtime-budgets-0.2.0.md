@@ -29,7 +29,7 @@ new controls apply finite defaults. Sustained throughput and scheduling behavior
 change deliberately. Consumers must rebuild the core and all dependents because
 configuration/diagnostic layouts gained fields. No binary ABI compatibility is
 claimed. For configuration limits and cooperative callback/stop bounds, read
-[Runtime work budgets](../development/runtime-work-budgets.md).
+[Runtime work budgets](../design/runtime-work-budgets.md).
 
 After publication, record the full reviewed merge commit in release notes and
 pin that exact commit in the consumer's host FetchContent `GIT_TAG` and all
@@ -47,7 +47,7 @@ contains 108 candidate runs plus six paired baseline runs, with no candidate
 watchdog events and both-core idle progress. The 1,000 Hz sampled 16,000 arrivals/s
 point is retained, while 100 Hz supports the tested 4,000 point and overflows at
 16,000. Saturated ready throughput is about 12.0%/7.8% lower than the paired
-baseline in timing modes 0/1. See the [complete settings and results](../development/runtime-work-budgets.md).
+baseline in timing modes 0/1. See the [complete settings and results](../design/runtime-work-budgets.md).
 Clean ESP-IDF 5.5.4 builds, exact final-head CI and independent review remain
 release gates; final PR validation records their completion.
 

@@ -1,4 +1,4 @@
-# Synthetic runtime baseline (#132)
+# Synthetic runtime baseline
 
 This additive fixture exercises the current `vehicle_telemetry::Runtime` with
 software-generated frames. It has no CAN driver, pins, board binding, Mazda
@@ -15,7 +15,7 @@ execution requires separate authorization and an isolated board.
 
 ## Host validation and exploratory measurements
 
-Use the [supported host build](supported-build.md) and its ordinary checks:
+Use the [supported host build](../guides/host-build.md) and its ordinary checks:
 
 ```sh
 cmake -S . -B /tmp/runtime-baseline-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
