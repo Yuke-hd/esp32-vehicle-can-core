@@ -8,6 +8,8 @@ Start with the [project README](../README.md) for an overview.
 | --- | --- |
 | [Consumer integration](guides/consumer-integration.md) | Add these components to your own ESP-IDF or CMake project. |
 | [Arduino receive-only sketch](guides/arduino-sketches.md) | Compose the installed package with Runtime lifecycle, diagnostics and generic notifications. |
+| [Arduino synthetic harness](guides/arduino-synthetic-harness.md) | Run bounded on-device checks with software frames and faults, without initializing TWAI. |
+| [Arduino acceptance evidence](guides/arduino-acceptance-evidence.md) | Inspect measured synthetic results and the outstanding physical CAN checklist. |
 | [Arduino package](guides/arduino-package.md) | Generate/install the exact classic ESP32 package and compile its private probe. |
 | [Host build](guides/host-build.md) | Build and test on your PC, including supported CMake versions and sanitizers. |
 | [Bench firmware](guides/bench-firmware.md) | Build the isolated T-CAN485 bench firmware. Never connect it to a vehicle. |
