@@ -124,3 +124,59 @@ jobs:
             -e IDF_CCACHE_ENABLE=1 \
             espressif/idf:v5.5.4 \
             bash -lc 'source /opt/esp/idf/export.sh >/dev/null && python3 tools/check_toolchain.py --scope firmware && cd firmware/tcan485-bench-ack-only && idf.py set-target esp32 && idf.py build && cd /project/firmware/runtime-synthetic-baseline && idf.py set-target esp32 && idf.py build && idf.py -B build/trace -D IDF_TARGET=esp32 -D SDKCONFIG=build/trace/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.trace.defaults" build && chmod -R a+rwX /project/.cache/ccache-firmware'
+  arduino-installed-package:
+    name: Arduino installed package compile/link
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install exact Arduino CLI and ESP32 core
+        shell: bash
+        run: |
+          readarray -t profile < <(python3 -c 'import json; p=json.load(open("tools/arduino/profile.json")); print(p["arduino_cli"]); print(p["arduino_cli_linux_x86_64_sha256"]); print(p["arduino_core"])')
+          archive="$RUNNER_TEMP/arduino-cli.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/arduino/arduino-cli/releases/download/v${profile[0]}/arduino-cli_${profile[0]}_Linux_64bit.tar.gz"
+          echo "${profile[1]}  $archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/arduino/bin"
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP/arduino/bin" arduino-cli
+          echo "$RUNNER_TEMP/arduino/bin" >> "$GITHUB_PATH"
+          python3 - "$RUNNER_TEMP/arduino" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          root = Path(sys.argv[1])
+          config = {
+              "board_manager": {"additional_urls": ["https://espressif.github.io/arduino-esp32/package_esp32_index.json"]},
+              "directories": {name: str(root / name) for name in ("data", "downloads", "user")},
+              "library": {"enable_unsafe_install": True},
+          }
+          (root / "config.yaml").write_text(json.dumps(config))
+          PY
+          cli="$RUNNER_TEMP/arduino/bin/arduino-cli"
+          "$cli" --config-file "$RUNNER_TEMP/arduino/config.yaml" core update-index
+          "$cli" --config-file "$RUNNER_TEMP/arduino/config.yaml" core install "${profile[2]}"
+      - name: Check installed Arduino tools
+        run: python3 tools/check_arduino_package.py --config-file "$RUNNER_TEMP/arduino/config.yaml"
+      - name: Stage current PR revision and install the clean package
+        shell: bash
+        run: |
+          python3 tools/stage_arduino.py --revision "$(git rev-parse HEAD)" --output "$RUNNER_TEMP/arduino/staged"
+          (cd "$RUNNER_TEMP/arduino/staged" && sha256sum --check ESP32VehicleCANCore.zip.sha256)
+          arduino-cli --config-file "$RUNNER_TEMP/arduino/config.yaml" lib install \
+            --zip-path "$RUNNER_TEMP/arduino/staged/ESP32VehicleCANCore.zip" --no-deps
+          mkdir -p "$RUNNER_TEMP/arduino/sketches"
+          cp -R tools/arduino/package_probe "$RUNNER_TEMP/arduino/sketches/package_probe"
+          python3 -c 'import json; print(json.load(open("tools/arduino/profile.json"))["language_option"])' \
+            > "$RUNNER_TEMP/arduino/sketches/package_probe/build_opt.h"
+      - name: Compile and link the installed private probe
+        shell: bash
+        run: |
+          fqbn=$(python3 -c 'import json; print(json.load(open("tools/arduino/profile.json"))["fqbn"])')
+          arduino-cli --config-file "$RUNNER_TEMP/arduino/config.yaml" compile --clean --verbose \
+            --fqbn "$fqbn" --build-path "$RUNNER_TEMP/arduino/build" \
+            "$RUNNER_TEMP/arduino/sketches/package_probe"
+      - name: Verify compiler, SDK, linked output and package isolation
+        run: |
+          python3 tools/check_arduino_package.py --config-file "$RUNNER_TEMP/arduino/config.yaml" \
+            --library "$RUNNER_TEMP/arduino/user/libraries/ESP32_Vehicle_CAN_Core" \
+            --build "$RUNNER_TEMP/arduino/build"
