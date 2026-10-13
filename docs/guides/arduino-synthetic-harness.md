@@ -101,3 +101,28 @@ measure actual TWAI receive, bus load, loss/overflow, electrical listen-only
 behavior, watchdog margin, or resource coexistence. All physical case rows
 under #97 remain separate and require their own measurements. Do not close #97
 or the Arduino milestone using this harness output.
+
+## Recorded synthetic validation
+
+On 2026-10-13, immutable source/sketch revision
+`72a2a044fe43b466c09361fd788168e57dcbfaee` was staged and installed in an
+isolated Arduino user directory. Package ZIP SHA-256 was
+`f00b746704a6ce20fbc766deb0d85651d5c2a7a9e4a88e6f053307f599b17561`.
+The exact profile above compiled/linked the external copied sketch with 340904
+bytes of flash and 38908 bytes of static RAM. The compile database contained
+exactly the four canonical project implementation sources, all from the
+installed package; depfiles contained no checkout path. Runtime's object used
+ESP timer/FreeRTOS symbols and no host thread backend. The linked ELF contained
+no TWAI driver installation, CAN start, or application driver-binding symbol.
+
+An authorized upload to a chip-verified ESP32-D0WDQ6-V3 revision 3.1 with a
+40 MHz crystal, with no CAN connected, executed all 14 checks and reported
+`SYNTHETIC SUMMARY checks=14 expected=14 failures=0 result=PASS`.
+The delayed-loop snapshot reported 2565 completed callbacks and five pause
+attempts. The delayed observer measured 34677 microseconds and one pause
+attempt; stop retry, quiescence and restart passed. The source initially
+remained AwaitingTraffic before any frame, then reported TimedOut after a frame
+followed by silence. Native regression validation passed 68/68 tests; the
+architecture checker passed. These observations apply to this one on-device
+synthetic run, not the physical #97 case matrix. Detailed sanitized hardware
+evidence is maintained separately under #97.
