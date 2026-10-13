@@ -291,6 +291,7 @@ TEST_CASE("generic runtime accepts an injected fake processor and source") {
   REQUIRE(runtime.start().ok());
   REQUIRE(source.inject(frame(0x123)));
   REQUIRE(observer.wait_for_frame(1));
+  REQUIRE(observer.wait_for_frame_diagnostic_count(1));
 
   CHECK(processor.reset_count == 1);
   CHECK(processor.process_count == 1);
