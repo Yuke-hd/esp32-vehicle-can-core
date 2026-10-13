@@ -78,6 +78,9 @@ For supported versions and sanitizer builds, see
 ESP32 bench firmware under [`firmware/`](firmware), you also need
 ESP-IDF v5.5.4. See [bench firmware](docs/guides/bench-firmware.md).
 
+For the generated Arduino-ESP32 package and its exact supported configuration,
+see [Arduino package](docs/guides/arduino-package.md).
+
 ## Safety
 
 - The vehicle-facing transport is **receive-only** and has no transmit API.

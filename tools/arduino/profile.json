@@ -1,0 +1,26 @@
+{
+  "arduino_cli": "1.3.1",
+  "arduino_cli_commit": "08ff7e2b",
+  "arduino_cli_linux_x86_64_sha256": "376428d7d45be640c00812a71612e1742edc2f5f9ee3742a2d6da7870e079588",
+  "arduino_core": "esp32:esp32@3.3.8",
+  "arduino_core_sha256": "8159cefaa2eea131360ac32393d741d462583297c8c1e5169ca48139fa324173",
+  "fqbn": "esp32:esp32:esp32:UploadSpeed=921600,CPUFreq=240,FlashFreq=80,FlashMode=qio,FlashSize=4M,PartitionScheme=default,DebugLevel=none,PSRAM=disabled,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default",
+  "esp_idf": "v5.5.4",
+  "compiler_package": "esp-x32@2601",
+  "compiler_version": "xtensa-esp-elf-g++ (crosstool-NG esp-14.2.0_20260121) 14.2.0",
+  "language_option": "-std=gnu++17",
+  "sdk_memory_type": "qio_qspi",
+  "sdk_settings": {
+    "CONFIG_IDF_TARGET_ESP32": 1,
+    "CONFIG_FREERTOS_HZ": 1000,
+    "CONFIG_FREERTOS_UNICORE": null,
+    "CONFIG_COMPILER_CXX_EXCEPTIONS": 1,
+    "CONFIG_COMPILER_CXX_RTTI": null,
+    "CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ": 160,
+    "CONFIG_ESP_INT_WDT": 1,
+    "CONFIG_ESP_INT_WDT_TIMEOUT_MS": 300,
+    "CONFIG_ESP_INT_WDT_CHECK_CPU1": 1,
+    "CONFIG_ESP_TASK_WDT_EN": 1,
+    "CONFIG_TWAI_ERRATA_FIX_LISTEN_ONLY_DOM": 1
+  }
+}

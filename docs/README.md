@@ -7,6 +7,7 @@ Start with the [project README](../README.md) for an overview.
 | Doc | Read it when you want to... |
 | --- | --- |
 | [Consumer integration](guides/consumer-integration.md) | Add these components to your own ESP-IDF or CMake project. |
+| [Arduino package](guides/arduino-package.md) | Generate/install the exact classic ESP32 package and compile its private probe. |
 | [Host build](guides/host-build.md) | Build and test on your PC, including supported CMake versions and sanitizers. |
 | [Bench firmware](guides/bench-firmware.md) | Build the isolated T-CAN485 bench firmware. Never connect it to a vehicle. |
 
