@@ -156,11 +156,11 @@ void run_checks() {
 
   if (!begin_case(Input::Silence))
     return;
-  const bool silent = wait_for([] {
-    return runtime.diagnostics().transport == vehicle_core::TransportHealth::TimedOut;
-  });
-  check("initial_silence", silent && !runtime.diagnostics().has_last_frame &&
-                              observer.diagnostic_calls.load() > 0);
+  const bool polled = wait_for([] { return observer.diagnostic_calls.load() >= 3; });
+  delay(30); // Longer than silence policy; pre-traffic state is still AwaitingTraffic.
+  check("initial_silence", polled && runtime.diagnostics().transport ==
+                                      vehicle_core::TransportHealth::AwaitingTraffic &&
+                              !runtime.diagnostics().has_last_frame && observer.completed.load() == 0);
   if (!begin_case(Input::OneFrame))
     return;
   const bool timed_out = wait_for([] {

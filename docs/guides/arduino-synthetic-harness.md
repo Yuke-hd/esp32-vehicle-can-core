@@ -51,7 +51,7 @@ These are test deadlines, not hard real-time scheduling guarantees.
 | `setup_configure` | Initial stopped configuration succeeds. |
 | `invalid_configuration` | Zero receive timeout is rejected. |
 | `start_failure` | Injected source start failure is reported and checked cleanup completes. |
-| `initial_silence` | TimedOut transport with no last frame and at least one diagnostic callback. |
+| `initial_silence` | At least three diagnostic callbacks, then a 30 ms wait; transport remains AwaitingTraffic with no last frame or completed frame callback. |
 | `frame_then_silence` | One synthetic frame completes, then transport times out with last-frame visibility. |
 | `delayed_loop_bounded_observer` | Worker completes more than 16 callbacks during an 80 ms loop delay and selects at least one budget pause. |
 | `configure_running_rejected` | Configuration while Running returns InvalidState. |
