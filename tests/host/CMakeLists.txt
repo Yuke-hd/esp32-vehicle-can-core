@@ -49,6 +49,16 @@ target_include_directories(vehicle_telemetry_runtime_tests PRIVATE ${CMAKE_SOURC
 target_compile_features(vehicle_telemetry_runtime_tests PRIVATE cxx_std_17)
 doctest_discover_tests(vehicle_telemetry_runtime_tests)
 
+# Compile the production adapter against a synthetic CAN boundary. This
+# exercises source ownership without claiming TWAI or scheduler execution.
+add_executable(can_bus_source_tests
+  ${CMAKE_SOURCE_DIR}/components/vehicle_telemetry/tests/can_bus_source_tests.cpp
+  ${CMAKE_SOURCE_DIR}/components/vehicle_telemetry/src/can_bus_source.cpp
+)
+target_include_directories(can_bus_source_tests PRIVATE ${CMAKE_SOURCE_DIR}/components/can_bus/include)
+target_link_libraries(can_bus_source_tests PRIVATE vehicle_telemetry doctest::doctest)
+doctest_discover_tests(can_bus_source_tests)
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(
   NAME architecture_contracts

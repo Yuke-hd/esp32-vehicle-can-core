@@ -7,6 +7,7 @@
 #include "can_bus/configuration.hpp"
 #include "can_bus/driver_binding.hpp"
 #include "can_bus/frame_ring.hpp"
+#include "can_bus/internal/acquisition_start.hpp"
 #include "can_bus/lifecycle.hpp"
 #include "driver/twai.h"
 #include "esp_timer.h"
@@ -140,22 +141,22 @@ void receive_task(void *) noexcept {
 
 } // namespace
 
-Result start(const Configuration &configuration) noexcept {
+internal::StartOutcome internal::start_with_ownership(const Configuration &configuration) noexcept {
   if (!internal::is_configuration_valid(configuration)) {
-    return Result::kInvalidConfiguration;
+    return {Result::kInvalidConfiguration, false};
   }
   if (!g_lifecycle.begin_start()) {
     switch (g_lifecycle.state()) {
     case LifecycleState::kRunning:
-      return Result::kAlreadyStarted;
+      return {Result::kAlreadyStarted, false};
     case LifecycleState::kStopping:
-      return Result::kStopping;
+      return {Result::kStopping, false};
     case LifecycleState::kFaulted:
-      return Result::kFaulted;
+      return {Result::kFaulted, false};
     case LifecycleState::kStopped:
       // A concurrent cleanup may have completed between begin_start() and
       // this read. Report the conservative state to the caller.
-      return Result::kNotStarted;
+      return {Result::kNotStarted, false};
     }
   }
 
@@ -167,7 +168,7 @@ Result start(const Configuration &configuration) noexcept {
   }
   if (g_available == nullptr || g_task_stopped == nullptr) {
     g_lifecycle.abort_start();
-    return Result::kTaskFailure;
+    return {Result::kTaskFailure, false};
   }
 
   // A stopped acquisition may leave accepted frames queued. They are owned by
@@ -188,11 +189,12 @@ Result start(const Configuration &configuration) noexcept {
   const twai_filter_config_t filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
   if (twai_driver_install(&general, &timing, &filter) != ESP_OK) {
     g_lifecycle.abort_start();
-    return Result::kDriverFailure;
+    return {Result::kDriverFailure, false};
   }
   g_lifecycle.mark_driver_installed();
   if (twai_start() != ESP_OK) {
-    if (twai_driver_uninstall() == ESP_OK) {
+    const bool driver_uninstalled = twai_driver_uninstall() == ESP_OK;
+    if (driver_uninstalled) {
       g_lifecycle.mark_driver_uninstalled();
       g_lifecycle.reconcile();
     } else {
@@ -200,7 +202,7 @@ Result start(const Configuration &configuration) noexcept {
       // uninstall instead of allowing start() to install a second driver.
       g_lifecycle.reconcile();
     }
-    return Result::kDriverFailure;
+    return {Result::kDriverFailure, !driver_uninstalled};
   }
   g_lifecycle.mark_driver_started();
 
@@ -223,18 +225,24 @@ Result start(const Configuration &configuration) noexcept {
     g_receive_requested.store(false, std::memory_order_release);
     g_lifecycle.acknowledge_task();
     (void)g_lifecycle.begin_stop();
+    bool cleanup_required = true;
     if (twai_stop() == ESP_OK) {
       g_lifecycle.mark_driver_stopped();
       if (twai_driver_uninstall() == ESP_OK) {
         g_lifecycle.mark_driver_uninstalled();
+        cleanup_required = false;
       }
     }
     g_lifecycle.reconcile();
     g_receive_task = nullptr;
-    return Result::kTaskFailure;
+    return {Result::kTaskFailure, cleanup_required};
   }
   g_has_started_before = true;
-  return Result::kOk;
+  return {Result::kOk, true};
+}
+
+Result start(const Configuration &configuration) noexcept {
+  return internal::start_with_ownership(configuration).result;
 }
 
 Result stop() noexcept {

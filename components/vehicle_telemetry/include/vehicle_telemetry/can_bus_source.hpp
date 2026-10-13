@@ -5,13 +5,21 @@
 
 namespace vehicle_telemetry {
 
-// The core repository owns this optional ESP-IDF binding. Runtime remains
+// The core repository owns this optional ESP32 binding. Runtime remains
 // source-injected, so controllers can replace it with a simulator, another
 // CAN implementation, or a test double without changing the runtime.
 class CanBusSource final : public AcquisitionSource {
 public:
   explicit CanBusSource(can_bus::Configuration configuration) noexcept
       : configuration_(configuration) {}
+
+  // Copies carry configuration only, never another source's cleanup claim.
+  // Assignment keeps this instance's claim; its new config applies next start.
+  CanBusSource(const CanBusSource &other) noexcept : configuration_(other.configuration_) {}
+  CanBusSource &operator=(const CanBusSource &other) noexcept {
+    configuration_ = other.configuration_;
+    return *this;
+  }
 
   [[nodiscard]] StatusResult start() noexcept override;
   [[nodiscard]] StatusResult stop() noexcept override;
@@ -23,6 +31,7 @@ public:
 
 private:
   can_bus::Configuration configuration_{};
+  bool owns_acquisition_{false};
 };
 
 } // namespace vehicle_telemetry
