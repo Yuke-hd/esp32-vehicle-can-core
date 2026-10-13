@@ -161,6 +161,8 @@ Keep vehicle-specific code in your project. Generic components must never
 include a make/model header or name a signal ID. Dependencies only point one
 way: `vehicle_telemetry → can_bus → vehicle_core`.
 
+For dependency lifetime, CAN cleanup responsibility, copying, and Arduino
+task assumptions, see [Runtime acquisition ownership](../design/runtime-ownership.md).
 To tune how much work the runtime does per cycle, see
 [Runtime work budgets](../design/runtime-work-budgets.md).
 

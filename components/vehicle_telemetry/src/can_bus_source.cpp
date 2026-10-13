@@ -1,5 +1,7 @@
 #include "vehicle_telemetry/can_bus_source.hpp"
 
+#include "can_bus/internal/acquisition_start.hpp"
+
 namespace vehicle_telemetry {
 namespace {
 
@@ -48,14 +50,24 @@ namespace {
 } // namespace
 
 StatusResult CanBusSource::start() noexcept {
-  return map_start_result(can_bus::start(configuration_));
+  const auto outcome = can_bus::internal::start_with_ownership(configuration_);
+  if (outcome.cleanup_required)
+    owns_acquisition_ = true;
+  return map_start_result(outcome.result);
 }
 
-StatusResult CanBusSource::stop() noexcept { return map_stop_result(can_bus::stop()); }
+StatusResult CanBusSource::stop() noexcept {
+  if (!owns_acquisition_)
+    return {ResultCode::NotRunning};
+  const auto result = map_stop_result(can_bus::stop());
+  if (result.ok() || result.status == ResultCode::NotRunning)
+    owns_acquisition_ = false;
+  return result;
+}
 
 bool CanBusSource::supports_stop_retry() const noexcept { return true; }
 
-StatusResult CanBusSource::retry_stop() noexcept { return map_stop_result(can_bus::stop()); }
+StatusResult CanBusSource::retry_stop() noexcept { return stop(); }
 
 ReceiveStatus CanBusSource::receive(vehicle_core::RawCanFrame &frame,
                                     const std::uint32_t timeout_ms) noexcept {
