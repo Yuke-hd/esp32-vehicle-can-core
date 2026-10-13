@@ -26,7 +26,7 @@ installed `boards.txt`/`platform.txt`, and actual compiler/SDK headers.
   SDK default CPU frequency is 160 MHz; the board compile option is 240 MHz.
 - `flags/defines` supplies `ESP_PLATFORM` and `IDF_VER="v5.5.4"`. The packaged
   `runtime.cpp` therefore selects the FreeRTOS/ESP timer backend.
-- The bundled C++ flags end in `-std=gnu++2a`; the probe's `build_opt.h` appends
+- The bundled C++ flags end in `-std=gnu++2a`; the clean sketch's generated `build_opt.h` appends
   `-std=gnu++17`. Actual compilation asserts the C++17 language value, IDF,
   compiler, ESP32 target, tick and relevant watchdog/core/exception settings.
 
@@ -77,7 +77,9 @@ cmp "$package_root/stage-a/ESP32VehicleCANCore.zip" "$package_root/stage-b/ESP32
 "$cli" --config-file "$package_root/config.yaml" lib install --no-deps \
   --zip-path "$package_root/stage-a/ESP32VehicleCANCore.zip"
 mkdir -p "$package_root/probe/package_probe"
-cp tools/arduino/package_probe/* "$package_root/probe/package_probe/"
+cp tools/arduino/package_probe/*.ino "$package_root/probe/package_probe/"
+python3 -c 'import json; print(json.load(open("tools/arduino/profile.json"))["language_option"])' \
+  > "$package_root/probe/package_probe/build_opt.h"
 fqbn=$(python3 -c 'import json; print(json.load(open("tools/arduino/profile.json"))["fqbn"])')
 "$cli" --config-file "$package_root/config.yaml" compile --verbose \
   --fqbn "$fqbn" --build-path "$package_root/build" \
@@ -89,7 +91,9 @@ it does not fetch arbitrary libraries. No `--library` or repository include
 path is needed. The installed folder is
 `user/libraries/ESP32_Vehicle_CAN_Core`. Include `ESP32VehicleCANCore.h` first
 for Arduino discovery; it only includes canonical APIs in their existing
-namespaces. `build/compile_commands.json` contains `directory`, `arguments`
+namespaces. Generate the sketch response file from the profile as shown above; it is not
+a C++ header and is not stored among repository sources.
+`build/compile_commands.json` contains `directory`, `arguments`
 and `file` entries; compiler depfiles and the verbose log record resolved paths.
 
 ## Package boundary and provenance
@@ -148,7 +152,7 @@ Native source/configuration and pins are unchanged. Local CMake 4.4.3/Ninja
 1.13.2/Apple Clang 17 host tests passed 59/59 including architecture checks;
 ESP-IDF v5.5.4 isolated-bench and runtime-synthetic builds passed. Linux Clang 14
 ASan/UBSan remains the supported sanitizer gate in the existing CI workflow;
-its result must be checked on the PR. See [host validation](host-build.md) and
+it passed on the initial PR head. Required CI must still pass on the final head. See [host validation](host-build.md) and
 [bench build commands](bench-firmware.md). Public sketches, Arduino runtime
 coexistence, CI package automation and physical isolated-bench evidence belong
 to the following milestone issues.
