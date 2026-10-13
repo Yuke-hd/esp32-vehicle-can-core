@@ -81,9 +81,37 @@ class ArduinoPackageCheckerTests(unittest.TestCase):
     def save_entries(self):
         (self.build / "compile_commands.json").write_text(json.dumps(self.entries))
 
-    def check(self):
+    def check(self, sketch_name=None):
         with patch.object(checker, "run", return_value=PROFILE["compiler_version"]):
-            checker.check_build(self.root, self.library, self.build, PROFILE, self.revision)
+            args = (self.root, self.library, self.build, PROFILE, self.revision)
+            if sketch_name is None:
+                checker.check_build(*args)
+            else:
+                checker.check_build(*args, sketch_name)
+
+    def test_public_sketch_linked_outputs_are_accepted(self):
+        (self.build / "package_probe.ino.elf").unlink()
+        for name in ("ReceiveOnlyRuntime", "RuntimeSyntheticHarness"):
+            with self.subTest(sketch=name):
+                elf = self.build / f"{name}.ino.elf"
+                elf.write_bytes(b"\x7fELFlinked")
+                self.check(name)
+                elf.unlink()
+
+    def test_probe_output_cannot_satisfy_public_sketch_check(self):
+        with self.assertRaisesRegex(checker.CheckFailure, "missing linked ReceiveOnlyRuntime.ino.elf"):
+            self.check("ReceiveOnlyRuntime")
+
+    def test_invalid_public_sketch_output_is_rejected(self):
+        (self.build / "RuntimeSyntheticHarness.ino.elf").write_bytes(b"not linked ELF")
+        with self.assertRaisesRegex(checker.CheckFailure, "missing linked RuntimeSyntheticHarness.ino.elf"):
+            self.check("RuntimeSyntheticHarness")
+
+    def test_sketch_name_cannot_escape_build_directory(self):
+        for name in ("../package_probe", "/tmp/package_probe", "package_probe.ino", "", "a/b", "a\\b"):
+            with self.subTest(sketch=name):
+                with self.assertRaisesRegex(checker.CheckFailure, "sketch name"):
+                    self.check(name)
 
     def test_clean_package_allows_sdk_app_main_source(self):
         source = self.hardware / "cores/app_main.cpp"

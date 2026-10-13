@@ -125,8 +125,21 @@ jobs:
             espressif/idf:v5.5.4 \
             bash -lc 'source /opt/esp/idf/export.sh >/dev/null && python3 tools/check_toolchain.py --scope firmware && cd firmware/tcan485-bench-ack-only && idf.py set-target esp32 && idf.py build && cd /project/firmware/runtime-synthetic-baseline && idf.py set-target esp32 && idf.py build && idf.py -B build/trace -D IDF_TARGET=esp32 -D SDKCONFIG=build/trace/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.trace.defaults" build && chmod -R a+rwX /project/.cache/ccache-firmware'
   arduino-installed-package:
-    name: Arduino installed package compile/link
+    name: Arduino installed ${{ matrix.sketch }} compile/link
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sketch: package_probe
+            source: tools/arduino/package_probe
+          - sketch: ReceiveOnlyRuntime
+            source: examples/arduino/ReceiveOnlyRuntime
+          - sketch: RuntimeSyntheticHarness
+            source: examples/arduino/RuntimeSyntheticHarness
+    env:
+      SKETCH_NAME: ${{ matrix.sketch }}
+      SKETCH_SOURCE: ${{ matrix.source }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install exact Arduino CLI and ESP32 core
@@ -165,18 +178,18 @@ jobs:
           arduino-cli --config-file "$RUNNER_TEMP/arduino/config.yaml" lib install \
             --zip-path "$RUNNER_TEMP/arduino/staged/ESP32VehicleCANCore.zip" --no-deps
           mkdir -p "$RUNNER_TEMP/arduino/sketches"
-          cp -R tools/arduino/package_probe "$RUNNER_TEMP/arduino/sketches/package_probe"
+          cp -R "$SKETCH_SOURCE" "$RUNNER_TEMP/arduino/sketches/$SKETCH_NAME"
           python3 -c 'import json; print(json.load(open("tools/arduino/profile.json"))["language_option"])' \
-            > "$RUNNER_TEMP/arduino/sketches/package_probe/build_opt.h"
-      - name: Compile and link the installed private probe
+            > "$RUNNER_TEMP/arduino/sketches/$SKETCH_NAME/build_opt.h"
+      - name: Compile and link the installed consumer (build evidence only)
         shell: bash
         run: |
           fqbn=$(python3 -c 'import json; print(json.load(open("tools/arduino/profile.json"))["fqbn"])')
           arduino-cli --config-file "$RUNNER_TEMP/arduino/config.yaml" compile --clean --verbose \
             --fqbn "$fqbn" --build-path "$RUNNER_TEMP/arduino/build" \
-            "$RUNNER_TEMP/arduino/sketches/package_probe"
+            "$RUNNER_TEMP/arduino/sketches/$SKETCH_NAME"
       - name: Verify compiler, SDK, linked output and package isolation
         run: |
           python3 tools/check_arduino_package.py --config-file "$RUNNER_TEMP/arduino/config.yaml" \
             --library "$RUNNER_TEMP/arduino/user/libraries/ESP32_Vehicle_CAN_Core" \
-            --build "$RUNNER_TEMP/arduino/build"
+            --build "$RUNNER_TEMP/arduino/build" --sketch-name "$SKETCH_NAME"

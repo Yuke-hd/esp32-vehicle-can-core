@@ -78,7 +78,9 @@ def expand_arguments(arguments, directory, depth=0):
     return expanded
 
 
-def check_build(root, library, build, profile, revision):
+def check_build(root, library, build, profile, revision, sketch_name="package_probe"):
+    require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", sketch_name) is not None,
+            f"invalid sketch name {sketch_name!r}; use a basename without extension or path separators")
     root, library, build = (path.resolve() for path in (root, library, build))
     require(not within(library, root) and not within(build, root),
             "installed library and build must use clean paths outside the repository")
@@ -175,8 +177,9 @@ def check_build(root, library, build, profile, revision):
             f"compiled package sources differ: missing {sorted(PACKAGE_SOURCES - compiled)}; extra {sorted(compiled - PACKAGE_SOURCES)}")
     output = run([str(compiler), "--version"]).splitlines()[0]
     require(output == profile["compiler_version"], f"compiler reported {output}; need {profile['compiler_version']}")
-    elf = build / "package_probe.ino.elf"
-    require(elf.is_file() and elf.read_bytes()[:4] == b"\x7fELF", "missing linked package_probe.ino.elf; run the actual compile/link command")
+    elf = build / f"{sketch_name}.ino.elf"
+    require(elf.is_file() and elf.read_bytes()[:4] == b"\x7fELF",
+            f"missing linked {elf.name}; run the actual compile/link command for {sketch_name}")
     print(f"OK {profile['compiler_version']}; {profile['esp_idf']}; {profile['sdk_memory_type']}; SDK settings {profile['sdk_settings']}")
     print(f"OK installed revision {revision}: {len(compiled)} package sources, {len(database)} objects/dependency files, linked ELF; no repository leakage")
     print(f"OK board options: {profile['fqbn']}")
@@ -189,6 +192,8 @@ def main():
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--library", type=Path)
     parser.add_argument("--build", type=Path)
+    parser.add_argument("--sketch-name", default="package_probe",
+                        help="expected linked sketch basename (default: package_probe)")
     args = parser.parse_args()
     if bool(args.library) != bool(args.build):
         parser.error("--library and --build must be supplied together after a real compile/link")
@@ -197,7 +202,7 @@ def main():
         check_environment(args.cli, args.config_file, profile)
         if args.build:
             revision = run(["git", "-C", str(args.root), "rev-parse", "HEAD"])
-            check_build(args.root, args.library, args.build, profile, revision)
+            check_build(args.root, args.library, args.build, profile, revision, args.sketch_name)
     except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError) as error:
         print(f"FAIL Arduino package check: {error}", file=sys.stderr)
         return 1
