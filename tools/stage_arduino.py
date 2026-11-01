@@ -13,11 +13,11 @@ COMPONENTS = ("vehicle_core", "can_bus", "vehicle_telemetry")
 SOURCES = ("vehicle_core/src/vehicle_core.cpp", "can_bus/src/can_bus.cpp",
            "vehicle_telemetry/src/runtime.cpp", "vehicle_telemetry/src/can_bus_source.cpp")
 PROPERTIES = """name=ESP32 Vehicle CAN Core
-version=0.2.0
+version=0.3.0
 author=ESP32 Vehicle CAN Core contributors
 maintainer=ESP32 Vehicle CAN Core contributors
 sentence=Generic receive-only CAN acquisition and injected telemetry runtime.
-paragraph=C++17 classic ESP32 composition with generic readings and notifications. The application supplies one listen-only driver binding.
+paragraph=C++17 classic ESP32 composition with generic readings and runtime observer hooks. The application supplies one listen-only driver binding.
 category=Communication
 url=https://github.com/Yuke-hd/esp32-vehicle-can-core
 architectures=esp32
@@ -59,7 +59,7 @@ def git(*args):
 
 def package_files(revision):
     files = {"library.properties": PROPERTIES.encode(),
-             "src/ESP32VehicleCANCore.h": b'#pragma once\n\n// Include convenience only; APIs remain in their canonical namespaces.\n#include "vehicle_core/vehicle_core.hpp"\n#include "vehicle_core/notification_channel.hpp"\n#include "vehicle_telemetry/runtime.hpp"\n#include "vehicle_telemetry/can_bus_source.hpp"\n'}
+             "src/ESP32VehicleCANCore.h": b'#pragma once\n\n// Include convenience only; APIs remain in their canonical namespaces.\n#include "vehicle_core/vehicle_core.hpp"\n#include "vehicle_telemetry/runtime.hpp"\n#include "vehicle_telemetry/can_bus_source.hpp"\n'}
     files["ARDUINO_DEPENDENCIES.md"] = DEPENDENCY_NOTICES.encode()
     files["ARDUINO_PROFILE.json"] = (ROOT / "tools/arduino/profile.json").read_bytes()
     entries = []

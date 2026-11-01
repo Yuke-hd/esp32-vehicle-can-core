@@ -26,7 +26,13 @@ class ArduinoPackageTests(unittest.TestCase):
                 for internal in ("src/can_bus/frame_ring.hpp", "src/can_bus/lifecycle.hpp",
                                  "src/can_bus/configuration.hpp", "src/vehicle_telemetry/runtime_budget.hpp"):
                     self.assertIn(internal, paths)
-                self.assertIn("src/vehicle_core/notification_channel.hpp", paths)
+                self.assertIn("src/vehicle_core/reading.hpp", paths)
+                # Split literals keep the removed-API architecture guard from matching this test.
+                for removed in ("src/vehicle_core/notification_" + "channel.hpp",
+                                "src/vehicle_core/" + "notification.hpp"):
+                    self.assertNotIn(removed, paths)
+                umbrella = archive.read(prefix + "src/ESP32VehicleCANCore.h").decode()
+                self.assertNotIn("notification", umbrella)
                 self.assertNotIn("include/", paths)
                 provenance = json.loads(archive.read(prefix + "PROVENANCE.json"))
                 self.assertEqual(provenance["source_revision"], first["source_revision"])

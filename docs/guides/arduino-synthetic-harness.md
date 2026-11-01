@@ -5,7 +5,7 @@ runs the installed generic package with an injected software source, processor
 and synchronous observer. It never initializes TWAI, provides a driver binding,
 selects CAN pins, or receives physical CAN. Run it on an isolated ESP32 with no
 CAN connected. Serial output contains only test names and aggregate counters.
-The receive-only normal sketch and notification composition are described in
+The receive-only normal sketch is described in
 [the sketch guide](arduino-sketches.md).
 
 ## Build and run

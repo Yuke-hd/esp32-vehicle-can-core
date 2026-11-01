@@ -7,8 +7,6 @@
 #include <vehicle_core/decoder_contracts.hpp>
 #include <vehicle_core/frame.hpp>
 #include <vehicle_core/health.hpp>
-#include <vehicle_core/notification.hpp>
-#include <vehicle_core/notification_channel.hpp>
 #include <vehicle_core/reading.hpp>
 #include <vehicle_core/signal.hpp>
 #include <vehicle_core/telemetry_contracts.hpp>

@@ -4,7 +4,7 @@
 This host-only gate owns repository-wide checks that cannot live in one
 production target: the portable core must build without controller or RTOS inputs,
 the isolated-bench binding must compile and exercise its project-owned mode
-contract, and retired capture code must stay absent.
+contract, and retired capture and notification-channel code must stay absent.
 """
 
 from __future__ import annotations
@@ -58,12 +58,10 @@ def _write_core_probe(probe_dir: Path, root: Path) -> Path:
     source = probe_dir / "core_only_consumer.cpp"
     source.write_text(
         '#include "vehicle_core/vehicle_core.hpp"\n'
-        '#include "vehicle_core/notification.hpp"\n'
         '#include "vehicle_core/reading.hpp"\n'
         '#include "vehicle_core/telemetry_contracts.hpp"\n'
         "#include <type_traits>\n"
         "static_assert(std::is_trivially_copyable_v<vehicle_core::Reading<float>>);\n"
-        "static_assert(std::is_trivially_copyable_v<vehicle_core::Notification<bool>>);\n"
         "int main() {\n"
         "  vehicle_core::RawCanFrame frame{};\n"
         "  return vehicle_core::library_is_available() && frame.is_valid() ? 0 : 1;\n"
@@ -309,6 +307,52 @@ def _check_capture_removal(root: Path) -> None:
     print("OK   retired raw_capture product has no active code/build dependency")
 
 
+def _check_notification_removal(root: Path) -> None:
+    """Keep decoded-signal notification ownership above CAN acquisition."""
+    patterns = (
+        "notification_" + "channel.hpp",
+        "vehicle_core/" + "notification.hpp",
+        "Notification" + "Channel",
+        "vehicle_core::" + "Notification<",
+        "vehicle_core_" + "notifications",
+    )
+    roots: Iterable[Path] = (
+        root / "CMakeLists.txt",
+        root / ".github/workflows/ci.yml",
+        root / "components",
+        root / "examples",
+        root / "firmware",
+        root / "tests",
+        root / "tools",
+    )
+    violations: List[str] = []
+    for entry in roots:
+        paths = [entry] if entry.is_file() else entry.rglob("*")
+        for path in paths:
+            if not path.is_file():
+                continue
+            if path.name != "CMakeLists.txt" and path.suffix not in {
+                ".c",
+                ".cc",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".ino",
+                ".py",
+                ".cmake",
+                ".yml",
+                ".yaml",
+            }:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for pattern in patterns:
+                if pattern in text:
+                    violations.append(f"{path.relative_to(root)} contains removed notification API {pattern}")
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print("OK   removed notification-channel API has no active code/build reference")
+
+
 def _check_generic_runtime_surface(root: Path) -> None:
     """Keep the injected runtime free of controller product vocabulary."""
     runtime_root = root / "components/vehicle_telemetry"
@@ -337,6 +381,7 @@ def check(root: Path, cmake: str, compiler: Sequence[str]) -> int:
             _check_core_only(root, cmake, compiler, work_dir)
             _check_adapter(root, cmake, compiler, root / "components/bench_can_ack/tests", work_dir)
             _check_capture_removal(root)
+            _check_notification_removal(root)
             _check_generic_runtime_surface(root)
         except (ArchitectureFailure, OSError, ValueError) as error:
             print(f"ERROR: {error}", file=sys.stderr)

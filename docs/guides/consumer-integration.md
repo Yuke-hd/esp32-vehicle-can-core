@@ -27,8 +27,8 @@ your project's `components/` folder.
 | Use the runtime loop that feeds your decoder | `vehicle_core` + `can_bus` + `vehicle_telemetry` |
 | Use only the shared types, for example in host tests | `vehicle_core` (see [Host CMake](#host-cmake-no-esp-idf)) |
 
-`can_bus` has no Component Manager manifest of its own, so always declare
-`vehicle_core` next to it.
+`can_bus`'s Component Manager manifest declares no dependencies, so always
+declare `vehicle_core` next to it.
 
 ## ESP-IDF: receive and print frames
 
@@ -185,9 +185,6 @@ FetchContent_MakeAvailable(vehicle_can_core)
 target_link_libraries(my_controller PRIVATE vehicle_core)
 ```
 
-- The component's own tests are **off by default**, even if you set
-  `BUILD_TESTING=ON`. To build them, set `VEHICLE_CORE_BUILD_TESTS=ON` before
-  `FetchContent_MakeAvailable`. They need `Threads::Threads`.
 - To use the runtime on the host, fetch `components/vehicle_telemetry` the same
   way.
 
@@ -200,7 +197,8 @@ target_link_libraries(my_controller PRIVATE vehicle_core)
 4. If you use the runtime, rebuild every component that depends on it. Newer
    versions may add configuration and diagnostic fields; the
    [0.2.0 release notes](../releases/runtime-budgets-0.2.0.md) cover that
-   change.
+   change. The [0.3.0 release notes](../releases/notification-removal-0.3.0.md)
+   cover the removed notification-channel API.
 
 Updating the core never changes your decoder or vehicle data. Those stay in
 your project.

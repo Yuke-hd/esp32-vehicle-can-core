@@ -33,8 +33,8 @@ installed `boards.txt`/`platform.txt`, and actual compiler/SDK headers.
 Runtime defaults remain 16 frames/2 ms per batch, 512 receive calls/20 ms per
 runnable period, and a requested 1 ms pause rounded up to at least one tick.
 Observed delay depends on scheduling. Observers run synchronously on the worker;
-cooperative budgets cannot preempt them. Header-only `NotificationChannel`
-composition does not create an independent Runtime callback task.
+cooperative budgets cannot preempt them. The package creates no independent
+Runtime callback task.
 
 ## Clean staging, installation and compilation
 
@@ -117,8 +117,7 @@ Exactly four implementation files compile: `vehicle_core.cpp`, `can_bus.cpp`,
 `runtime.cpp` and `can_bus_source.cpp`. Bench bindings, firmware `app_main`,
 host tests, fake IDF headers and controller/product code are excluded. The
 probe links the real Runtime with injected CanBusSource, FrameProcessor and
-Observer, lifecycle/diagnostics, generic Reading/Notification and all five
-NotificationChannel composition calls. It supplies exactly one sketch-side
+Observer, lifecycle/diagnostics and the generic Reading contract. It supplies exactly one sketch-side
 `configure_driver` binding with `TWAI_MODE_LISTEN_ONLY` and `tx_queue_len=0`.
 
 ## Recorded evidence and limitations

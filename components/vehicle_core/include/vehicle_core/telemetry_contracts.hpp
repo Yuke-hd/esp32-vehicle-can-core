@@ -23,15 +23,4 @@ template <typename T> struct Reading {
   ValidationStatus validation{ValidationStatus::Reference};
 };
 
-template <typename T> struct Notification {
-  Reading<T> current{};
-  bool initial{false};
-  bool became_unavailable{false};
-  bool recovered{false};
-  bool coalesced{false};
-};
-
-template <typename T>
-using Callback = void (*)(void *context, const Notification<T> &notification) noexcept;
-
 } // namespace vehicle_core
