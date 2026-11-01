@@ -1,0 +1,2 @@
+version: "0.3.0"
+description: "Receive-only classic-CAN acquisition for ESP32 TWAI"

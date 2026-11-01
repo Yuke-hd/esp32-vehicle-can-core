@@ -6,9 +6,11 @@ against the resulting `main` commit. Use tag `0.3.0`, following the existing
 `0.1.0`/`0.2.0`/`0.2.1` naming. Existing tags, including `0.2.1`, are not
 rewritten or replaced. Starting with this release, the `vehicle_core` and
 `vehicle_telemetry` component manifests and the Arduino library version follow
-the repository release version in lockstep, so all three are 0.3.0. Earlier
-releases versioned components independently (at `0.2.1`, `vehicle_core` was
-0.1.0 and `vehicle_telemetry` 0.2.0). Do not tag an unmerged branch or substitute the branch head for the final
+the repository release version in lockstep, so all three are 0.3.0. `can_bus`
+gains its first manifest, also 0.3.0; it declares no dependencies, so consumers
+still declare `vehicle_core` next to it. Earlier releases versioned components
+independently (at `0.2.1`, `vehicle_core` was 0.1.0, `vehicle_telemetry` 0.2.0
+and `can_bus` had no manifest). Do not tag an unmerged branch or substitute the branch head for the final
 squash-merge commit.
 
 ## Changes

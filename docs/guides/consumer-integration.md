@@ -27,8 +27,8 @@ your project's `components/` folder.
 | Use the runtime loop that feeds your decoder | `vehicle_core` + `can_bus` + `vehicle_telemetry` |
 | Use only the shared types, for example in host tests | `vehicle_core` (see [Host CMake](#host-cmake-no-esp-idf)) |
 
-`can_bus` has no Component Manager manifest of its own, so always declare
-`vehicle_core` next to it.
+`can_bus`'s Component Manager manifest declares no dependencies, so always
+declare `vehicle_core` next to it.
 
 ## ESP-IDF: receive and print frames
 
