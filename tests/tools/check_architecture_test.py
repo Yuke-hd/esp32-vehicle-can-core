@@ -77,5 +77,29 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 self.assertIn(path.relative_to(root).as_posix(), detail)
 
 
+    def test_removed_notification_api_is_rejected_in_active_sources(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-notification-fixture-") as directory:
+            root = Path(directory)
+            files = {
+                root / "components/example/include/example.hpp": '#include "vehicle_core/notification_' + 'channel.hpp"\n',
+                root / "examples/arduino/Example/Example.ino": "vehicle_core::Notification" + "Channel<int, 1> c;\n",
+                root / "tools/example.py": 'HEADER = "vehicle_core/' + 'notification.hpp"\n',
+            }
+            for path, text in files.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_notification_removal(root)
+
+            detail = str(raised.exception)
+            for path in files:
+                self.assertIn(path.relative_to(root).as_posix(), detail)
+
+    def test_repository_has_no_removed_notification_api(self) -> None:
+        with redirect_stdout(io.StringIO()):
+            check_architecture._check_notification_removal(REPOSITORY_ROOT)
+
+
 if __name__ == "__main__":
     unittest.main()

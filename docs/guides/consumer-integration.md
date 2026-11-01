@@ -185,9 +185,6 @@ FetchContent_MakeAvailable(vehicle_can_core)
 target_link_libraries(my_controller PRIVATE vehicle_core)
 ```
 
-- The component's own tests are **off by default**, even if you set
-  `BUILD_TESTING=ON`. To build them, set `VEHICLE_CORE_BUILD_TESTS=ON` before
-  `FetchContent_MakeAvailable`. They need `Threads::Threads`.
 - To use the runtime on the host, fetch `components/vehicle_telemetry` the same
   way.
 
@@ -200,7 +197,8 @@ target_link_libraries(my_controller PRIVATE vehicle_core)
 4. If you use the runtime, rebuild every component that depends on it. Newer
    versions may add configuration and diagnostic fields; the
    [0.2.0 release notes](../releases/runtime-budgets-0.2.0.md) cover that
-   change.
+   change. The [0.3.0 release notes](../releases/notification-removal-0.3.0.md)
+   cover the removed notification-channel API.
 
 Updating the core never changes your decoder or vehicle data. Those stay in
 your project.

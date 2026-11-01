@@ -9,12 +9,12 @@ behavior.
 
 | Module | Owns | Boundary rule |
 | --- | --- | --- |
-| `vehicle_core` | Portable time, classic-CAN frame, signal, reading, notification, health, and decoder contracts | No make/model, CAN driver, board, ESP-IDF, or RTOS dependency |
+| `vehicle_core` | Portable time, classic-CAN frame, signal, reading, health, and decoder contracts | No make/model, CAN driver, board, ESP-IDF, or RTOS dependency |
 | `vehicle_telemetry` | Make-agnostic injected acquisition/processing/observer runtime, lifecycle, timeout, and transport diagnostics | No make/model types, signal IDs, publication descriptors, lighting policy, or board dependency |
 | `can_bus` | ESP-IDF/TWAI receive-only lifecycle, bounded queue, and diagnostics | No runtime mode selector or business-level data-frame transmit operation |
 | `bench_can_ack` | Explicit isolated-bench ACK binding | Normal mode is confined to the separately named T-CAN485 bench project |
 | `tcan485-bench-ack-only` | Isolated T-CAN485 firmware composition | Must never be connected to a vehicle or treated as product firmware |
-| downstream controller | Make/model decoder, publication/descriptors/subscriptions, lighting policy, board support, firmware, and protocol evidence | Consume generic components as pinned Git dependencies |
+| downstream controller | Make/model decoder, publication/descriptors/subscriptions and signal notification delivery, lighting policy, board support, firmware, and protocol evidence | Consume generic components as pinned Git dependencies |
 
 ## Include and source compatibility
 

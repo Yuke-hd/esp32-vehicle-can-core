@@ -3,8 +3,6 @@
 #include <ESP32VehicleCANCore.h>
 #include <can_bus/driver_binding.hpp>
 #include <esp_idf_version.h>
-#include <vehicle_core/notification.hpp>
-#include <vehicle_core/notification_channel.hpp>
 #include <vehicle_core/reading.hpp>
 #include <vehicle_telemetry/can_bus_source.hpp>
 #include <vehicle_telemetry/runtime.hpp>
@@ -34,13 +32,8 @@ void configure_driver(twai_general_config_t &configuration) noexcept {
 } // namespace can_bus::internal
 
 namespace {
-vehicle_core::NotificationChannel<int, 1> channel;
 vehicle_core::Reading<int> observed;
 volatile std::uint32_t compile_result;
-
-void on_notice(void *, const vehicle_core::Notification<int> &notice) noexcept {
-  observed = notice.current;
-}
 
 class Processor final : public vehicle_telemetry::FrameProcessor {
 public:
@@ -67,17 +60,8 @@ vehicle_telemetry::Runtime runtime{source, processor, observer};
 } // namespace
 
 void setup() {
-  const auto first = channel.subscribe(on_notice, nullptr);
-  if (first.value)
-    compile_result = static_cast<std::uint32_t>(channel.unsubscribe(*first.value));
-  const auto second = channel.register_callback(on_notice, nullptr);
-  compile_result = second.ok();
-  compile_result = static_cast<std::uint32_t>(channel.start());
   observed = {42, vehicle_core::Availability::Fresh, vehicle_core::ValidationStatus::Observed};
-  compile_result = static_cast<std::uint32_t>(channel.publish(observed));
-  compile_result = static_cast<std::uint32_t>(channel.dispatch_one());
-  compile_result = channel.dispatch_pending(2);
-  compile_result = static_cast<std::uint32_t>(channel.stop());
+  compile_result = static_cast<std::uint32_t>(observed.availability);
   compile_result = static_cast<std::uint32_t>(runtime.configure({}).status);
   compile_result = static_cast<std::uint32_t>(runtime.start().status);
   compile_result = static_cast<std::uint32_t>(runtime.lifecycle());
